@@ -15,7 +15,7 @@ RUN apk update && \
         # Audio tools
         cdparanoia \
         flac \
-        cdrtools \
+        cdrkit \
         libcdio \
         cdrdao \
         # Build dependencies (permanent for Python packages that need compilation)
