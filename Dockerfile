@@ -8,7 +8,10 @@ RUN apk add --no-cache \
     python3 \
     py3-pip \
     bash \
-    curl
+    curl \
+    gcc \
+    musl-dev \
+    python3-dev
 
 # Install audio packages (these should exist in Alpine)
 RUN apk add --no-cache \
@@ -23,12 +26,21 @@ RUN apk add --no-cache cdrdao || echo "cdrdao not available, continuing..."
 # Create python symlink
 RUN ln -sf python3 /usr/bin/python
 
+# Upgrade pip
+RUN pip3 install --upgrade pip
+
 # Create app directory
 WORKDIR /app
 
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
+
+# Install Python packages with better error handling
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Clean up build dependencies to reduce image size
+RUN apk del gcc musl-dev python3-dev
 
 # Copy application files
 COPY . .
