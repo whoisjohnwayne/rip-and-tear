@@ -32,7 +32,7 @@ ripping:
 
 metadata:
   use_musicbrainz: true
-  auto_fetch: false  # Disable automatic metadata fetching to prevent wrong album matches
+  auto_fetch: true  # Allow automatic metadata fetching with improved accuracy
   musicbrainz_server: "musicbrainz.org"
   user_agent: "RipAndTear/1.0"
   contact_email: "user@example.com"  # Required by MusicBrainz

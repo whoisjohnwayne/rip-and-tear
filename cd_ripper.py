@@ -596,7 +596,23 @@ class CDRipper:
 
     def get_status(self) -> Dict[str, Any]:
         """Get current ripping status"""
-        cd_present = self._check_cd_present()
+        # If we're actively working with the CD, assume it's present to avoid conflicts
+        # with cdparanoia processes already accessing the drive
+        active_states = [
+            RipStatus.READING_TOC,
+            RipStatus.FETCHING_METADATA,
+            RipStatus.RIPPING_BURST,
+            RipStatus.VERIFYING_ACCURATERIP,
+            RipStatus.RERIPPING_FAILED_TRACKS,
+            RipStatus.RIPPING_PARANOIA,
+            RipStatus.ENCODING,
+            RipStatus.CREATING_CUE
+        ]
+        
+        if self.status in active_states:
+            cd_present = True
+        else:
+            cd_present = self._check_cd_present()
         
         return {
             'status': self.status,

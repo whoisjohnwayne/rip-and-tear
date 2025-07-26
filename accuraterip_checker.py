@@ -203,23 +203,67 @@ class AccurateRipChecker:
             return []
     
     def _calculate_disc_id_from_info(self, disc_info) -> Optional[str]:
-        """Calculate disc ID from disc info structure"""
+        """Calculate proper AccurateRip disc ID from track offsets"""
         try:
-            if hasattr(disc_info, 'disc_id') and disc_info.disc_id:
-                return disc_info.disc_id
+            # AccurateRip disc ID calculation based on actual CD track offsets
+            # This is critical for finding the correct AccurateRip database entry
             
-            # Fallback calculation based on track count and total sectors
-            track_count = len(disc_info.tracks)
-            total_sectors = disc_info.total_sectors
+            if not hasattr(disc_info, 'tracks') or not disc_info.tracks:
+                self.logger.error("No track information available for disc ID calculation")
+                return None
             
-            disc_data = f"{track_count}_{total_sectors}"
-            disc_hash = hashlib.md5(disc_data.encode()).hexdigest()[:8]
+            # Calculate the real AccurateRip disc ID using track offsets
+            # AccurateRip uses the CD's actual track table of contents (TOC)
+            track_offsets = []
             
-            return disc_hash.upper()
+            for track in disc_info.tracks:
+                # AccurateRip uses MSF (Minutes:Seconds:Frames) offsets
+                # Convert sectors to MSF format (75 sectors per second)
+                offset_sectors = track.start_sector + 150  # Add 2-second CD standard offset
+                track_offsets.append(offset_sectors)
+            
+            # Add leadout position
+            if disc_info.tracks:
+                last_track = disc_info.tracks[-1]
+                leadout_sectors = last_track.start_sector + last_track.length_sectors + 150
+                track_offsets.append(leadout_sectors)
+            
+            # Calculate AccurateRip disc IDs (there are typically 3 IDs)
+            disc_id1 = self._calculate_accuraterip_disc_id1(track_offsets)
+            disc_id2 = self._calculate_accuraterip_disc_id2(track_offsets)
+            disc_id3 = self._calculate_accuraterip_disc_id3(track_offsets)
+            
+            # Use the first disc ID as primary
+            self.logger.info(f"Calculated AccurateRip disc IDs: {disc_id1:08X}, {disc_id2:08X}, {disc_id3:08X}")
+            return f"{disc_id1:08X}"
             
         except Exception as e:
-            self.logger.error(f"Failed to calculate disc ID from info: {e}")
+            self.logger.error(f"Failed to calculate AccurateRip disc ID: {e}")
             return None
+    
+    def _calculate_accuraterip_disc_id1(self, track_offsets: List[int]) -> int:
+        """Calculate AccurateRip disc ID #1"""
+        disc_id = 0
+        for i, offset in enumerate(track_offsets[:-1]):  # Exclude leadout
+            disc_id += offset * (i + 1)
+        return disc_id & 0xFFFFFFFF
+    
+    def _calculate_accuraterip_disc_id2(self, track_offsets: List[int]) -> int:
+        """Calculate AccurateRip disc ID #2"""
+        disc_id = 0
+        for offset in track_offsets[:-1]:  # Exclude leadout
+            disc_id += offset
+        return disc_id & 0xFFFFFFFF
+    
+    def _calculate_accuraterip_disc_id3(self, track_offsets: List[int]) -> int:
+        """Calculate AccurateRip disc ID #3 (CDPlayer/EAC style)"""
+        if len(track_offsets) < 2:
+            return 0
+            
+        disc_id = track_offsets[-1]  # Leadout position
+        for i in range(len(track_offsets) - 1):
+            disc_id += track_offsets[i] * (i + 1)
+        return disc_id & 0xFFFFFFFF
     
     def _get_accuraterip_data(self, disc_id: str, track_count: int) -> Optional[bytes]:
         """Get AccurateRip data for the disc"""
