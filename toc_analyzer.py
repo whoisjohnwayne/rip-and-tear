@@ -444,80 +444,6 @@ class TOCAnalyzer:
             line = line.strip()
             self.logger.debug(f"Line {line_num}: '{line}'")
             
-            # Look for lines that contain track information
-            # cdparanoia -Q can have various formats, but tracks typically have:
-            # - A track number followed by a period
-            # - Sector count
-            # - Duration in brackets
-            
-            # Very flexible pattern to catch track lines
-            # Examples: " 1. 19497 [04:19.72] ..." or "track 01 ..." etc.
-            try:
-                if re.search(r'^\s*(\d{1,2})\.', line) or re.search(r'track\s+(\d+)', line.lower()):
-                    
-                    # Extract track number
-                    track_num_match = re.search(r'(\d{1,2})\.?', line)
-                    if not track_num_match:
-                        continue
-                    
-                    track_num = int(track_num_match.group(1))
-                    
-                    # Look for sector count (usually a larger number)
-                    sector_matches = re.findall(r'\b(\d{4,})\b', line)  # 4+ digit numbers
-                    if not sector_matches:
-                        self.logger.info(f"No sector count found in line: '{line}'")
-                        continue
-                    
-                    sectors = int(sector_matches[0])  # Take first large number as sectors
-                    
-                    # Extract duration if present in [mm:ss.ff] format
-                    duration_match = re.search(r'\[(\d+):(\d+)\.(\d+)\]', line)
-                    if duration_match:
-                        minutes = int(duration_match.group(1))
-                        seconds = int(duration_match.group(2))
-                        frames = int(duration_match.group(3))
-                    else:
-                        # Calculate duration from sectors (75 sectors per second)
-                        total_seconds = sectors / 75
-                        minutes = int(total_seconds // 60)
-                        seconds = int(total_seconds % 60)
-                        frames = int((total_seconds % 1) * 75)
-                    
-                    # Basic validation - reasonable track lengths
-                    if track_num <= 0 or track_num > 99:
-                        self.logger.debug(f"Skipping invalid track number: {track_num}")
-                        continue
-                    
-                    # More reasonable bounds - 10 seconds to 20 minutes
-                    min_sectors = 750    # 10 seconds  
-                    max_sectors = 90000  # 20 minutes
-                    if sectors < min_sectors or sectors > max_sectors:
-                        self.logger.info(f"Skipping track {track_num} with unusual length: {sectors} sectors ({sectors/75:.1f} seconds)")
-                        continue
-                    
-                    # Estimate start sector based on previous tracks
-                    start_sector = sum(t['sectors'] for t in tracks)
-                    
-                    duration = f"{minutes}:{seconds:02d}.{frames:02d}"
-                    
-                    tracks.append({
-                        'number': track_num,
-                        'duration': duration,
-                        'sectors': sectors,
-                        'start_sector': start_sector,
-                        'type': 'audio'
-                    })
-                    total_sectors += sectors
-                    self.logger.info(f"✓ Accepted track {track_num}: {duration} ({sectors} sectors, {sectors/75:.1f}s, start: {start_sector})")
-                    
-                # Log lines that might be tracks but didn't match
-                elif re.search(r'\d+\.\s+\d+', line):
-                    self.logger.info(f"❌ Rejected potential track line: '{line}'")
-                    
-            except (ValueError, IndexError, AttributeError) as e:
-                self.logger.warning(f"Error parsing track line '{line}': {e}")
-                continue
-            
             # Real cdparanoia -Q output format:
             # " 1. 19497 [04:19.72] 0 [00:00.00] OK no 2"
             # Track number, sectors, [duration], start_sector, [start_time], status, pre, ch
@@ -553,6 +479,12 @@ class TOCAnalyzer:
                         start_sector = sum(t['sectors'] for t in tracks)  # Rough estimate
                         status = 'unknown'
                     
+                    # Check if we already have this track (avoid duplicates)
+                    existing_track = next((t for t in tracks if t['number'] == track_num), None)
+                    if existing_track:
+                        self.logger.debug(f"Track {track_num} already exists, skipping duplicate")
+                        continue
+                    
                     # Flexible validation - allow reasonable track numbers and lengths
                     if track_num <= 0 or track_num > 99:
                         self.logger.debug(f"Skipping invalid track number: {track_num}")
@@ -566,7 +498,7 @@ class TOCAnalyzer:
                         continue
                     
                     # Prefer tracks with "OK" status but don't require it
-                    if status.lower() not in ['ok', 'good', 'pass']:
+                    if status.lower() not in ['ok', 'good', 'pass', 'unknown']:
                         self.logger.debug(f"Track {track_num} has status '{status}' - accepting anyway")
                     
                     # Warn about non-sequential track numbers but accept them

@@ -78,7 +78,12 @@ echo "   • Portainer deployment files"
 echo "   • Build and validation scripts"
 echo "   • License and requirements"
 echo
-echo "🎯 Project is now production-ready and clean!"
+echo "🎯 Project is now deployment-ready and clean!"
+echo
+echo "⚠️  Note: Still in active development and testing phase"
+echo "   • Core functionality implemented but needs validation"
+echo "   • Recent fixes for MusicBrainz and AccurateRip require testing"
+echo "   • Performance and stability testing ongoing"
 
 # Show final file count
 echo
