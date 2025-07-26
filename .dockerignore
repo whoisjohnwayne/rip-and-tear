@@ -30,7 +30,6 @@ __pycache__
 # Output directories (will be mounted)
 output/
 logs/
-config/
 
 # OS
 .DS_Store
