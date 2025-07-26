@@ -68,6 +68,11 @@ class CDRipper:
                 self._update_status(RipStatus.ERROR, "Failed to analyze CD structure")
                 return False
             
+            # Validate that we have tracks
+            if not hasattr(disc_info, 'tracks') or not disc_info.tracks:
+                self._update_status(RipStatus.ERROR, "No tracks found on CD - disc may be damaged or unreadable")
+                return False
+            
             self.total_tracks = len(disc_info.tracks)
             self.logger.info(f"Found {self.total_tracks} tracks on CD")
             

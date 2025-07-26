@@ -79,14 +79,18 @@ class TOCAnalyzer:
             # Get basic TOC information
             basic_toc = self._get_basic_toc()
             if not basic_toc:
+                self.logger.error("Failed to read basic TOC from CD")
                 return None
             
             # Get detailed track information with gaps
             detailed_tracks = self._analyze_track_gaps(basic_toc)
+            if not detailed_tracks:
+                self.logger.error("Failed to analyze tracks - CD may be damaged or blank")
+                return None
             
             # Detect HTOA (Hidden Track One Audio)
             htoa_info = self._detect_htoa()
-            if htoa_info:
+            if htoa_info and len(detailed_tracks) > 0:
                 detailed_tracks[0].has_htoa = True
                 detailed_tracks[0].htoa_length = htoa_info
             
@@ -97,10 +101,10 @@ class TOCAnalyzer:
             disc_id = self._calculate_precise_disc_id(detailed_tracks)
             
             disc_info = DiscInfo(
-                total_sectors=basic_toc['total_sectors'],
-                leadout_sector=basic_toc['leadout_sector'],
-                first_track=basic_toc['first_track'],
-                last_track=basic_toc['last_track'],
+                total_sectors=basic_toc.get('total_sectors', 0),
+                leadout_sector=basic_toc.get('leadout_sector', 0),
+                first_track=basic_toc.get('first_track', 1),
+                last_track=basic_toc.get('last_track', len(detailed_tracks)),
                 tracks=detailed_tracks,
                 has_cd_text=bool(cd_text),
                 disc_id=disc_id,
@@ -115,23 +119,18 @@ class TOCAnalyzer:
             return None
     
     def _get_basic_toc(self) -> Optional[Dict[str, Any]]:
-        """Get basic TOC using multiple methods for accuracy"""
-        methods = [
-            self._get_toc_cdparanoia,
-            self._get_toc_cdrdao,
-            self._get_toc_cd_discid
-        ]
-        
-        for method in methods:
-            try:
-                result = method()
-                if result:
-                    self.logger.info(f"TOC obtained using {method.__name__}")
-                    return result
-            except Exception as e:
-                self.logger.warning(f"{method.__name__} failed: {e}")
-        
-        return None
+        """Get basic TOC using cdparanoia (most reliable method)"""
+        try:
+            result = self._get_toc_cdparanoia()
+            if result:
+                self.logger.info("TOC obtained using cdparanoia")
+                return result
+            else:
+                self.logger.error("Failed to get TOC using cdparanoia")
+                return None
+        except Exception as e:
+            self.logger.error(f"cdparanoia failed: {e}")
+            return None
     
     def _get_toc_cdparanoia(self) -> Optional[Dict[str, Any]]:
         """Get TOC using cdparanoia"""
@@ -178,37 +177,33 @@ class TOCAnalyzer:
         """Analyze gaps between tracks with EAC-level precision"""
         tracks = []
         
+        # Always start with basic tracks as foundation
+        tracks = self._create_basic_tracks(basic_toc)
+        if not tracks:
+            self.logger.error("Failed to create basic tracks - CD may be unreadable")
+            return []
+        
+        self.logger.info(f"Created {len(tracks)} basic tracks")
+        
+        # Try to enhance with gap information if tools are available
         try:
-            # Use cdrdao for precise gap detection (increase timeout for complex discs)
-            timeout = self.config.get('ripping', {}).get('gap_analysis_timeout', 300)  # 5 minutes default
-            self.logger.info(f"Starting gap analysis with {timeout}s timeout...")
-            
+            # First, try cdparanoia verbose for additional gap info
             result = subprocess.run(
-                ['cdrdao', 'read-toc', '--device', self.device, '/tmp/temp.toc'],
-                capture_output=True, text=True, timeout=timeout
+                ['cdparanoia', '-Q', '-d', self.device, '-v'],
+                capture_output=True, text=True, timeout=30
             )
             
             if result.returncode == 0:
-                tracks = self._parse_gap_analysis('/tmp/temp.toc')
-                if not tracks:
-                    self.logger.warning("Gap analysis parsing failed, using basic tracks")
-                    tracks = self._create_basic_tracks(basic_toc)
-            else:
-                self.logger.warning(f"cdrdao failed with return code {result.returncode}")
-                if result.stderr:
-                    self.logger.warning(f"cdrdao error: {result.stderr[:200]}")
-                tracks = self._create_basic_tracks(basic_toc)
+                enhanced_tracks = self._parse_cdparanoia_gaps(result.stderr)
+                if enhanced_tracks and len(enhanced_tracks) == len(tracks):
+                    # Merge gap information into basic tracks
+                    for i, enhanced_track in enumerate(enhanced_tracks):
+                        if i < len(tracks):
+                            tracks[i].pregap_sectors = enhanced_track.pregap_sectors
+                    self.logger.info("Enhanced tracks with gap information from cdparanoia")
                 
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"Gap analysis timed out after {timeout}s - using basic track info")
-            tracks = self._create_basic_tracks(basic_toc)
         except Exception as e:
-            self.logger.warning(f"Gap analysis failed: {e}")
-            tracks = self._create_basic_tracks(basic_toc)
-            
-        if not tracks:
-            self.logger.error("Failed to create any track information")
-            return []
+            self.logger.debug(f"Gap enhancement failed (not critical): {e}")
         
         return tracks
     
@@ -344,6 +339,54 @@ class TOCAnalyzer:
         
         return None
     
+    def _parse_cdparanoia_gaps(self, output: str) -> List[TrackInfo]:
+        """Parse cdparanoia verbose output for gap information"""
+        tracks = []
+        lines = output.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('track'):
+                # Parse: "track 01.  audio    00:32.17    760 [00:02.17]"
+                # The part in brackets is often the pregap
+                parts = line.split()
+                if len(parts) >= 4 and parts[2] == 'audio':
+                    track_num = int(parts[1].rstrip('.'))
+                    duration = parts[3]
+                    
+                    # Convert duration to sectors (75 sectors per second)
+                    sectors = 0
+                    if ':' in duration:
+                        time_parts = duration.split(':')
+                        minutes = int(time_parts[0])
+                        seconds = float(time_parts[1])
+                        sectors = int((minutes * 60 + seconds) * 75)
+                    
+                    # Look for pregap info in brackets
+                    pregap_sectors = 0
+                    bracket_match = re.search(r'\[(\d+):(\d+\.\d+)\]', line)
+                    if bracket_match:
+                        pregap_min = int(bracket_match.group(1))
+                        pregap_sec = float(bracket_match.group(2))
+                        pregap_sectors = int((pregap_min * 60 + pregap_sec) * 75)
+                    
+                    track = TrackInfo(
+                        number=track_num,
+                        start_sector=0,  # Will be calculated based on previous tracks
+                        length_sectors=sectors,
+                        pregap_sectors=pregap_sectors,
+                        track_type='audio'
+                    )
+                    tracks.append(track)
+        
+        # Calculate start sectors
+        current_sector = 0
+        for track in tracks:
+            track.start_sector = current_sector
+            current_sector += track.length_sectors
+        
+        return tracks
+
     def _parse_cdparanoia_output(self, output: str) -> Dict[str, Any]:
         """Parse cdparanoia -Q output"""
         tracks = []
@@ -406,22 +449,46 @@ class TOCAnalyzer:
         """Create basic track info when detailed analysis fails"""
         tracks = []
         
-        if not basic_toc or 'tracks' not in basic_toc:
-            self.logger.error("Invalid basic_toc data for creating tracks")
+        if not basic_toc:
+            self.logger.error("No basic_toc data available for creating tracks")
+            return tracks
+            
+        # Try to extract track info from different possible formats
+        track_data = basic_toc.get('tracks', [])
+        if not track_data:
+            # Fallback: create tracks based on first/last track numbers
+            first_track = basic_toc.get('first_track', 1)
+            last_track = basic_toc.get('last_track', 0)
+            
+            if last_track >= first_track and last_track > 0:
+                self.logger.info(f"Creating {last_track - first_track + 1} basic tracks")
+                total_sectors = basic_toc.get('total_sectors', 0)
+                sectors_per_track = total_sectors // (last_track - first_track + 1) if last_track > first_track else total_sectors
+                
+                for i in range(first_track, last_track + 1):
+                    track = TrackInfo(
+                        number=i,
+                        start_sector=(i - first_track) * sectors_per_track,
+                        length_sectors=sectors_per_track,
+                        track_type='audio'
+                    )
+                    tracks.append(track)
+            else:
+                self.logger.error(f"Invalid track range: {first_track}-{last_track}")
             return tracks
             
         current_sector = 0
         
         try:
-            for track_data in basic_toc['tracks']:
-                if not isinstance(track_data, dict):
-                    self.logger.warning(f"Invalid track data format: {track_data}")
+            for track_info in track_data:
+                if not isinstance(track_info, dict):
+                    self.logger.warning(f"Invalid track data format: {track_info}")
                     continue
                     
                 track = TrackInfo(
-                    number=track_data.get('number', len(tracks) + 1),
+                    number=track_info.get('number', len(tracks) + 1),
                     start_sector=current_sector,
-                    length_sectors=track_data.get('sectors', 0),
+                    length_sectors=track_info.get('sectors', 0),
                     track_type='audio'
                 )
                 tracks.append(track)
