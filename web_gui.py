@@ -155,8 +155,8 @@ class WebGUI:
         
         @self.app.route('/health')
         def health():
-            """Health check endpoint"""
-            return jsonify({'status': 'healthy'})
+            """Health check endpoint - simple text response to minimize logging"""
+            return 'OK', 200
     
     def run(self):
         """Run the Flask web server"""

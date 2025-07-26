@@ -24,6 +24,16 @@ def setup_logging():
     log_dir = Path(os.getenv('LOG_DIR', '/logs'))
     log_dir.mkdir(exist_ok=True)
     
+    # Custom filter to exclude health check logs
+    class HealthCheckFilter(logging.Filter):
+        def filter(self, record):
+            # Filter out health check requests
+            if hasattr(record, 'getMessage'):
+                message = record.getMessage()
+                return '/health' not in message
+            return True
+    
+    # Configure main logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,6 +42,11 @@ def setup_logging():
             logging.StreamHandler(sys.stdout)
         ]
     )
+    
+    # Apply filter to werkzeug (Flask's HTTP logger) to suppress health check logs
+    werkzeug_logger = logging.getLogger('werkzeug')
+    werkzeug_logger.addFilter(HealthCheckFilter())
+    werkzeug_logger.setLevel(logging.WARNING)  # Reduce werkzeug verbosity overall
 
 def main():
     """Main application entry point"""

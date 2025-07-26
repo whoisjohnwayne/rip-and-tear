@@ -37,6 +37,8 @@ echo "🧹 Removing debug and temporary files..."
 remove_file "Dockerfile.minimal" "temporary workaround - no longer needed"
 remove_file "debug-pip-install.sh" "debugging script - no longer needed"
 remove_file "add-license-headers.sh" "development script - not needed for production"
+remove_file "cd-drive-debug.sh" "debugging script - can be regenerated if needed"
+remove_file "test-cd-detection.sh" "debugging script - can be regenerated if needed"
 
 # Keep Makefile as it's useful for development - just notify
 if [ -f "Makefile" ]; then
