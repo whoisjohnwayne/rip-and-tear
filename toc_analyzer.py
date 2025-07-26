@@ -434,6 +434,12 @@ class TOCAnalyzer:
         
         self.logger.info(f"Parsing cdparanoia output: {len(lines)} lines")
         
+        # DEBUG: Log the raw cdparanoia output to see what we're actually parsing
+        self.logger.info("=== RAW CDPARANOIA OUTPUT FOR DEBUGGING ===")
+        for i, line in enumerate(lines[:25]):  # Show first 25 lines
+            self.logger.info(f"Line {i:2d}: '{line}'")
+        self.logger.info("=== END RAW OUTPUT ===")
+        
         for line_num, line in enumerate(lines):
             line = line.strip()
             self.logger.debug(f"Line {line_num}: '{line}'")
@@ -455,6 +461,12 @@ class TOCAnalyzer:
                     
                     # Validate track number
                     if track_num <= 0 or track_num > 99:
+                        self.logger.debug(f"Skipping invalid track number: {track_num}")
+                        continue
+                    
+                    # Skip tracks that are too short (likely data or index)
+                    if sectors < 300:  # Less than 4 seconds (75 sectors/second)
+                        self.logger.info(f"Skipping very short track {track_num}: {sectors} sectors")
                         continue
                     
                     duration = f"{minutes}:{seconds:02d}.{frames:02d}"

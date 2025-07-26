@@ -176,14 +176,32 @@ class AccurateRipChecker:
         try:
             verified_tracks = []
             
-            # Get AccurateRip data for the disc
-            disc_id = self._calculate_disc_id_from_info(disc_info)
-            if not disc_id:
-                self.logger.warning("Could not calculate disc ID for track verification")
+            # Calculate all three AccurateRip disc IDs
+            if not hasattr(disc_info, 'tracks') or not disc_info.tracks:
+                self.logger.warning("No track information available for AccurateRip verification")
                 return []
             
+            # Calculate track offsets for disc ID calculation
+            track_offsets = []
+            for track in disc_info.tracks:
+                offset_sectors = track.start_sector + 150  # Add 2-second CD standard offset
+                track_offsets.append(offset_sectors)
+            
+            # Add leadout position
+            if disc_info.tracks:
+                last_track = disc_info.tracks[-1]
+                leadout_sectors = last_track.start_sector + last_track.length_sectors + 150
+                track_offsets.append(leadout_sectors)
+            
+            # Calculate all three disc IDs
+            disc_id1 = self._calculate_accuraterip_disc_id1(track_offsets)
+            disc_id2 = self._calculate_accuraterip_disc_id2(track_offsets)
+            disc_id3 = self._calculate_accuraterip_disc_id3(track_offsets)
+            
+            self.logger.info(f"Calculated disc IDs: {disc_id1:08X}, {disc_id2:08X}, {disc_id3:08X}")
+            
             # Try to get AccurateRip data
-            ar_data = self._get_accuraterip_data(disc_id, len(track_checksums))
+            ar_data = self._get_accuraterip_data_with_ids(disc_id1, disc_id2, disc_id3, len(track_checksums))
             if not ar_data:
                 self.logger.info("No AccurateRip data available for this disc")
                 return []
@@ -212,6 +230,11 @@ class AccurateRipChecker:
                 self.logger.error("No track information available for disc ID calculation")
                 return None
             
+            # Debug: Log track information
+            self.logger.info(f"Disc ID calculation: Found {len(disc_info.tracks)} tracks")
+            for i, track in enumerate(disc_info.tracks):
+                self.logger.info(f"Track {i+1}: start_sector={track.start_sector}, length={track.length_sectors}")
+            
             # Calculate the real AccurateRip disc ID using track offsets
             # AccurateRip uses the CD's actual track table of contents (TOC)
             track_offsets = []
@@ -228,6 +251,8 @@ class AccurateRipChecker:
                 leadout_sectors = last_track.start_sector + last_track.length_sectors + 150
                 track_offsets.append(leadout_sectors)
             
+            self.logger.info(f"Track offsets for AccurateRip: {track_offsets}")
+            
             # Calculate AccurateRip disc IDs (there are typically 3 IDs)
             disc_id1 = self._calculate_accuraterip_disc_id1(track_offsets)
             disc_id2 = self._calculate_accuraterip_disc_id2(track_offsets)
@@ -242,39 +267,56 @@ class AccurateRipChecker:
             return None
     
     def _calculate_accuraterip_disc_id1(self, track_offsets: List[int]) -> int:
-        """Calculate AccurateRip disc ID #1"""
+        """Calculate AccurateRip disc ID #1 (FreeDB style)"""
+        disc_id = 0
+        for i, offset in enumerate(track_offsets[:-1]):  # Exclude leadout
+            disc_id += offset
+        return disc_id & 0xFFFFFFFF
+    
+    def _calculate_accuraterip_disc_id2(self, track_offsets: List[int]) -> int:
+        """Calculate AccurateRip disc ID #2 (alternative calculation)"""
+        if len(track_offsets) < 2:
+            return 0
+        disc_id = track_offsets[-1]  # Start with leadout
+        for i, offset in enumerate(track_offsets[:-1]):  # Exclude leadout
+            disc_id ^= offset
+        return disc_id & 0xFFFFFFFF
+    
+    def _calculate_accuraterip_disc_id3(self, track_offsets: List[int]) -> int:
+        """Calculate AccurateRip disc ID #3 (weighted sum)"""
         disc_id = 0
         for i, offset in enumerate(track_offsets[:-1]):  # Exclude leadout
             disc_id += offset * (i + 1)
         return disc_id & 0xFFFFFFFF
     
-    def _calculate_accuraterip_disc_id2(self, track_offsets: List[int]) -> int:
-        """Calculate AccurateRip disc ID #2"""
-        disc_id = 0
-        for offset in track_offsets[:-1]:  # Exclude leadout
-            disc_id += offset
-        return disc_id & 0xFFFFFFFF
-    
-    def _calculate_accuraterip_disc_id3(self, track_offsets: List[int]) -> int:
-        """Calculate AccurateRip disc ID #3 (CDPlayer/EAC style)"""
-        if len(track_offsets) < 2:
-            return 0
-            
-        disc_id = track_offsets[-1]  # Leadout position
-        for i in range(len(track_offsets) - 1):
-            disc_id += track_offsets[i] * (i + 1)
-        return disc_id & 0xFFFFFFFF
-    
     def _get_accuraterip_data(self, disc_id: str, track_count: int) -> Optional[bytes]:
         """Get AccurateRip data for the disc"""
         try:
-            url = f"{self.accuraterip_url}/{disc_id[0]}/{disc_id[1]}/{disc_id[2]}/dBAR-{track_count:03d}-{disc_id}-{disc_id}-{disc_id}.bin"
+            # The disc_id parameter is actually disc_id1, we need all three IDs
+            # This method needs to be called with all three disc IDs
+            self.logger.warning("_get_accuraterip_data called with single disc_id - needs refactoring")
+            return None
             
-            self.logger.debug(f"Fetching AccurateRip data: {url}")
+        except Exception as e:
+            self.logger.error(f"Failed to get AccurateRip data: {e}")
+            return None
+    
+    def _get_accuraterip_data_with_ids(self, disc_id1: int, disc_id2: int, disc_id3: int, track_count: int) -> Optional[bytes]:
+        """Get AccurateRip data for the disc using all three disc IDs"""
+        try:
+            # Convert disc IDs to hex strings
+            id1_hex = f"{disc_id1:08X}"
+            id2_hex = f"{disc_id2:08X}"
+            id3_hex = f"{disc_id3:08X}"
+            
+            # AccurateRip URL format: .../[first]/[second]/[third]/dBAR-[tracks]-[id1]-[id2]-[id3].bin
+            url = f"{self.accuraterip_url}/{id1_hex[0]}/{id1_hex[1]}/{id1_hex[2]}/dBAR-{track_count:03d}-{id1_hex}-{id2_hex}-{id3_hex}.bin"
+            
+            self.logger.info(f"Fetching AccurateRip data: {url}")
             
             response = requests.get(url, timeout=30)
             if response.status_code == 200:
-                self.logger.debug(f"Retrieved {len(response.content)} bytes of AccurateRip data")
+                self.logger.info(f"Retrieved {len(response.content)} bytes of AccurateRip data")
                 return response.content
             elif response.status_code == 404:
                 self.logger.info("Disc not found in AccurateRip database")
