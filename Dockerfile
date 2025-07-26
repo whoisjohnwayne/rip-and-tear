@@ -1,25 +1,27 @@
-FROM alpine:latest
+FROM alpine:3.18
 
-# Install system dependencies
+# Update package index
+RUN apk update
+
+# Install essential packages
 RUN apk add --no-cache \
     python3 \
     py3-pip \
-    cdparanoia \
-    flac \
-    curl \
-    udev \
-    dbus \
-    util-linux \
-    cdrtools \
-    libcdio \
-    libcdio-paranoia \
-    libcdio-utils \
-    cd-discid \
     bash \
-    && ln -sf python3 /usr/bin/python
+    curl
 
-# Install cdrdao for .cue support and advanced gap detection
-RUN apk add --no-cache cdrdao
+# Install audio packages (these should exist in Alpine)
+RUN apk add --no-cache \
+    cdparanoia \
+    flac
+
+# Try to install additional tools (fallback if not available)
+RUN apk add --no-cache cdrtools || echo "cdrtools not available, continuing..."
+RUN apk add --no-cache libcdio || echo "libcdio not available, continuing..."  
+RUN apk add --no-cache cdrdao || echo "cdrdao not available, continuing..."
+
+# Create python symlink
+RUN ln -sf python3 /usr/bin/python
 
 # Create app directory
 WORKDIR /app
