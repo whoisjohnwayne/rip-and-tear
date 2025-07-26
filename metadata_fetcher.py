@@ -36,23 +36,26 @@ class MetadataFetcher:
     
     def get_metadata(self, toc_info: Dict[str, Any]) -> Dict[str, Any]:
         """Get metadata for the CD with robust error handling"""
+        # Check if automatic metadata fetching is disabled
+        if not self.config['metadata'].get('auto_fetch', True):
+            self.logger.info("Automatic metadata fetching disabled - using default track names for AccurateRip accuracy")
+            return self._get_default_metadata(toc_info)
+            
         if not self.config['metadata']['use_musicbrainz'] or not MUSICBRAINZ_AVAILABLE:
             return self._get_default_metadata(toc_info)
         
         try:
-            # Try to find release using TOC
-            disc_id = self._calculate_disc_id(toc_info)
-            if disc_id:
+            # Use the real disc ID from TOC analysis if available
+            disc_id = toc_info.get('disc_id')
+            if disc_id and disc_id != "UNKNOWN":
                 release_info = self._search_by_disc_id(disc_id)
                 if release_info:
+                    self.logger.info(f"Found exact disc match: {release_info['artist']} - {release_info['album']}")
                     return release_info
             
-            # Fallback: try fuzzy search if we have enough tracks
-            tracks = toc_info.get('tracks', [])
-            if len(tracks) >= 3:  # Only try if we have at least 3 tracks
-                fuzzy_result = self._fuzzy_search(toc_info)
-                if fuzzy_result:
-                    return fuzzy_result
+            # DISABLE fuzzy search for now - it causes wrong album matches
+            # This is critical for AccurateRip verification accuracy
+            self.logger.warning("No exact disc ID match found - using default metadata to ensure AccurateRip accuracy")
             
         except Exception as e:
             self.logger.error(f"MusicBrainz metadata fetch failed: {e}")
@@ -61,34 +64,38 @@ class MetadataFetcher:
         return self._get_default_metadata(toc_info)
     
     def _calculate_disc_id(self, toc_info: Dict[str, Any]) -> Optional[str]:
-        """Calculate MusicBrainz disc ID"""
-        # This is a simplified disc ID calculation
-        # In practice, you'd want to use libdiscid or similar
-        try:
-            tracks = toc_info['tracks']
-            if not tracks:
-                return None
-            
-            # Simple hash based on track count and total time
-            track_count = len(tracks)
-            total_time = toc_info.get('total_time', '00:00')
-            
-            # This is a placeholder - real implementation would use proper disc ID
-            simple_id = f"{track_count}_{total_time.replace(':', '')}"
-            return simple_id
-            
-        except Exception as e:
-            self.logger.error(f"Failed to calculate disc ID: {e}")
-            return None
+        """Calculate MusicBrainz disc ID - DEPRECATED: Use real disc_id from TOC analysis"""
+        # This method is deprecated - we now use the actual disc ID 
+        # calculated from track offsets in the TOC analyzer
+        self.logger.warning("Using deprecated disc ID calculation - should use real disc_id from TOC")
+        return None
     
     def _search_by_disc_id(self, disc_id: str) -> Optional[Dict[str, Any]]:
         """Search MusicBrainz by disc ID"""
         try:
-            # Note: This is a simplified search
-            # Real implementation would use proper MusicBrainz disc ID lookup
             self.logger.info(f"Searching MusicBrainz for disc ID: {disc_id}")
             
-            # For now, return None to trigger fuzzy search
+            # Try to search using the actual disc ID as a query
+            # Note: For proper MusicBrainz disc ID lookup, we'd need libdiscid
+            # This is a simplified approach
+            
+            # Try searching by the disc ID hash
+            query = f'discid:{disc_id}'
+            result = mb.search_releases(
+                query=query,
+                limit=5,
+                format='json'
+            )
+            
+            release_list = result.get('release-list', []) if isinstance(result, dict) else []
+            if release_list:
+                self.logger.info(f"Found {len(release_list)} potential matches for disc ID {disc_id}")
+                # Use the first exact match
+                release = release_list[0]
+                if isinstance(release, dict):
+                    return self._parse_musicbrainz_release(release, 0)  # Track count will be determined from MB data
+            
+            self.logger.info(f"No exact disc ID match found for {disc_id}")
             return None
             
         except Exception as e:
