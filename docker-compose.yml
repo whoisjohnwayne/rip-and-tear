@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  rip-and-tear:
+    image: ghcr.io/your-username/rip-and-tear:latest  # Change to your registry
+    container_name: rip-and-tear
+    privileged: true  # Required for CD drive access
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/config
+      - ./output:/output
+      - ./logs:/logs
+      - /dev:/dev  # CD drive access
+    devices:
+      - /dev/cdrom:/dev/cdrom  # Adjust path for your CD drive
+      # Alternative device paths you might need:
+      # - /dev/sr0:/dev/sr0
+      # - /dev/sr1:/dev/sr1
+    environment:
+      # Basic directories
+      - OUTPUT_DIR=/output
+      - CONFIG_DIR=/config
+      - LOG_DIR=/logs
+      - PYTHONUNBUFFERED=1
+      
+      # CD Drive Configuration
+      - CD_DEVICE=/dev/cdrom
+      - DRIVE_OFFSET=0              # Drive offset correction in samples
+      - DRIVE_SPEED=max             # Ripping speed: "max" or number like "8"
+      - ENABLE_C2=false             # Enable C2 error detection
+      - TEST_AND_COPY=false         # Test read before actual rip
+      
+      # Ripping Configuration  
+      - TRY_BURST_FIRST=true        # Try burst mode first
+      - USE_ACCURATERIP=true        # Verify against AccurateRip
+      - PARANOIA_MODE=full          # Paranoia mode: full, overlap, neverskip
+      - MAX_RETRIES=10              # Maximum retry attempts
+      - SECTOR_RETRIES=20           # Retries per problematic sector
+      # Advanced ripping options
+      - ENABLE_GAP_DETECTION=true
+      - READ_LEAD_IN=true
+      - MULTIPLE_READ_VERIFICATION=true
+      - VERIFY_RERIP=true           # Verify re-ripped tracks immediately
+      - SELECTIVE_RERIP=true        # Only re-rip failed AccurateRip tracks
+      
+      # Output Configuration
+      - OUTPUT_FORMAT=flac          # Output format
+      - COMPRESSION_LEVEL=8         # FLAC compression level (0-8)
+      - CREATE_CUE=true             # Create CUE sheets
+      - CREATE_LOG=true             # Create rip logs
+      - PRESERVE_HTOA=true          # Preserve Hidden Track One Audio
+      - GAP_HANDLING=preserve       # Gap handling: preserve, skip, append
+      
+      # Metadata Configuration
+      - USE_MUSICBRAINZ=true        # Fetch metadata from MusicBrainz
+      - MUSICBRAINZ_SERVER=musicbrainz.org
+      - USER_AGENT=RipAndTear/1.0
+      - CONTACT_EMAIL=user@example.com  # Required by MusicBrainz
+      
+      # Web GUI Configuration
+      - WEB_HOST=0.0.0.0            # Web interface host
+      - WEB_PORT=8080               # Web interface port
+      - WEB_DEBUG=false             # Enable web debug mode
+      
+      # Logging Configuration
+      - LOG_LEVEL=INFO              # Log level: DEBUG, INFO, WARNING, ERROR
+      - MAX_LOG_FILES=10            # Maximum log files to keep
+      - MAX_LOG_SIZE_MB=50          # Maximum log file size in MB
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Optional: Add a volume for better performance and data persistence
+volumes:
+  rip_and_tear_data:
+    driver: local

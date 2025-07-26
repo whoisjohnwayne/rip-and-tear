@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  rip-and-tear:
+    image: ghcr.io/whoisjohnwayne/rip-and-tear:latest  # UPDATE THIS
+    container_name: rip-and-tear
+    privileged: true  # Required for CD drive access
+    ports:
+      - "8080:8080"
+    volumes:
+      - rip_and_tear_config:/config
+      - rip_and_tear_output:/output
+      - rip_and_tear_logs:/logs
+      - /dev:/dev  # Host device access for CD drive
+    devices:
+      - /dev/cdrom:/dev/cdrom  # Change if your CD device is different
+    environment:
+      # REQUIRED: Change this to your email (required by MusicBrainz)
+      - CONTACT_EMAIL=your-email@example.com
+      
+      # OPTIONAL: Set your drive's offset (check accuraterip.com)
+      - DRIVE_OFFSET=0
+      
+      # OPTIONAL: Change CD device if different
+      - CD_DEVICE=/dev/cdrom
+      
+      # Selective re-ripping features (enabled by default)
+      - TRY_BURST_FIRST=true
+      - USE_ACCURATERIP=true
+      - SELECTIVE_RERIP=true
+      
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  rip_and_tear_config:
+  rip_and_tear_output:
+  rip_and_tear_logs:

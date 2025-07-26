@@ -1,0 +1,46 @@
+# Rip and Tear Configuration
+# This file contains all configuration options for the CD ripper
+
+cd_drive:
+  device: "/dev/cdrom"
+  offset: 0  # Drive offset correction in samples (check accuraterip.com for your drive)
+  speed: "max"  # Ripping speed: "max", or specific number like "8"
+  enable_c2: false  # Enable C2 error detection if supported by drive
+  test_and_copy: false  # Perform test read before actual rip (EAC-style)
+
+output:
+  directory: "/output"
+  format: "flac"
+  compression_level: 8  # FLAC compression level (0-8, higher = smaller files)
+  create_cue: true
+  create_log: true
+  preserve_htoa: true  # Preserve Hidden Track One Audio
+  gap_handling: "preserve"  # "preserve", "skip", "append" - how to handle gaps
+
+ripping:
+  try_burst_first: true  # Try burst mode first, fallback to paranoia if verification fails
+  use_accuraterip: true  # Verify against AccurateRip database
+  paranoia_mode: "full"  # Paranoia mode: "full", "overlap", "neverskip"
+  max_retries: 10
+  sector_retries: 20  # Retries per sector for problematic areas
+  enable_gap_detection: true  # Detect gaps between tracks
+  read_lead_in: true  # Read lead-in area for HTOA detection
+  multiple_read_verification: true  # Read tracks multiple times for verification
+  verify_rerip: true  # Verify re-ripped tracks immediately
+  selective_rerip: true  # Only re-rip tracks that fail AccurateRip verification
+
+metadata:
+  use_musicbrainz: true
+  musicbrainz_server: "musicbrainz.org"
+  user_agent: "RipAndTear/1.0"
+  contact_email: "user@example.com"  # Required by MusicBrainz
+
+web_gui:
+  host: "0.0.0.0"
+  port: 8080
+  debug: false
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  max_log_files: 10
+  max_log_size_mb: 50

@@ -1,0 +1,133 @@
+# Docker Compose Override Template
+# Copy this to docker-compose.override.yml and customize your settings
+# This file will automatically be used by docker-compose
+
+version: '3.8'
+
+services:
+  rip-and-tear:
+    environment:
+      # =============================================================================
+      # CD DRIVE CONFIGURATION
+      # =============================================================================
+      
+      # Drive device path - adjust for your system
+      - CD_DEVICE=/dev/cdrom        # Common alternatives: /dev/sr0, /dev/sr1
+      
+      # Drive offset correction (CRITICAL for accuracy)
+      # Look up your drive at: http://accuraterip.com/driveoffsets.htm
+      - DRIVE_OFFSET=6              # Example: Plextor drives often use +30
+      
+      # Ripping speed (lower = more accurate for problematic discs)
+      - DRIVE_SPEED=8               # Options: "max", "1", "2", "4", "8", "16", "24"
+      
+      # Advanced drive features (if supported by your drive)
+      - ENABLE_C2=true              # C2 error detection for supported drives
+      - TEST_AND_COPY=true          # EAC-style test read before ripping
+      
+      # =============================================================================
+      # RIPPING STRATEGY
+      # =============================================================================
+      
+      # Primary ripping method
+      - TRY_BURST_FIRST=true        # false = always use paranoia mode
+      - USE_ACCURATERIP=true        # Verify against AccurateRip database
+      
+      # Paranoia mode settings (when burst fails or disabled)
+      - PARANOIA_MODE=full          # Options: "full", "overlap", "neverskip"
+      - MAX_RETRIES=10              # Overall retry attempts per track
+      - SECTOR_RETRIES=20           # Retries per problematic sector
+      
+      # Advanced accuracy features
+      - ENABLE_GAP_DETECTION=true   # Detect pre/post gaps between tracks
+      - READ_LEAD_IN=true           # Read lead-in area for HTOA detection
+      - MULTIPLE_READ_VERIFICATION=true # Read tracks multiple times for verification
+      
+      # =============================================================================
+      # OUTPUT CONFIGURATION
+      # =============================================================================
+      
+      # Audio format and quality
+      - OUTPUT_FORMAT=flac          # Currently only FLAC supported
+      - COMPRESSION_LEVEL=8         # FLAC compression: 0 (fast) to 8 (best compression)
+      
+      # Additional files to create
+      - CREATE_CUE=true             # Create CUE sheets with gap information
+      - CREATE_LOG=true             # Create detailed rip logs
+      
+      # Special track handling
+      - PRESERVE_HTOA=true          # Extract Hidden Track One Audio (track 00)
+      - GAP_HANDLING=preserve       # Options: "preserve", "skip", "append"
+      
+      # =============================================================================
+      # METADATA CONFIGURATION
+      # =============================================================================
+      
+      - USE_MUSICBRAINZ=true        # Fetch metadata from MusicBrainz
+      - MUSICBRAINZ_SERVER=musicbrainz.org  # Use custom server if needed
+      - USER_AGENT=RipAndTear/1.0   # User agent for MusicBrainz requests
+      - CONTACT_EMAIL=your-email@example.com  # REQUIRED by MusicBrainz
+      
+      # =============================================================================
+      # WEB INTERFACE
+      # =============================================================================
+      
+      - WEB_HOST=0.0.0.0            # Interface to bind to (0.0.0.0 = all interfaces)
+      - WEB_PORT=8080               # Port for web interface
+      - WEB_DEBUG=false             # Enable Flask debug mode
+      
+      # =============================================================================
+      # LOGGING AND MONITORING
+      # =============================================================================
+      
+      - LOG_LEVEL=INFO              # Options: DEBUG, INFO, WARNING, ERROR
+      - MAX_LOG_FILES=10            # Number of log files to keep
+      - MAX_LOG_SIZE_MB=50          # Maximum size per log file
+    
+    # =============================================================================
+    # DEVICE MAPPING (adjust for your system)
+    # =============================================================================
+    devices:
+      - /dev/cdrom:/dev/cdrom       # Primary CD drive
+      # - /dev/sr0:/dev/sr0         # Alternative SCSI CD-ROM
+      # - /dev/sr1:/dev/sr1         # Second CD drive
+    
+    # =============================================================================
+    # ADVANCED VOLUME MAPPING
+    # =============================================================================
+    volumes:
+      - ./config:/config           # Configuration files
+      - ./output:/output           # Ripped albums output
+      - ./logs:/logs               # Application logs
+      - /dev:/dev                  # Device access
+      
+      # Optional: Map to specific output locations
+      # - /media/music:/output     # Map to existing music library
+      # - /var/log/rip-tear:/logs  # System log location
+
+# =============================================================================
+# EXAMPLE CONFIGURATIONS
+# =============================================================================
+
+# High Accuracy Configuration (slower but most accurate):
+# - DRIVE_SPEED=4
+# - TRY_BURST_FIRST=false
+# - PARANOIA_MODE=full
+# - TEST_AND_COPY=true
+# - MULTIPLE_READ_VERIFICATION=true
+# - SECTOR_RETRIES=50
+
+# Fast Ripping Configuration (good for known clean discs):
+# - DRIVE_SPEED=max
+# - TRY_BURST_FIRST=true
+# - USE_ACCURATERIP=true
+# - PARANOIA_MODE=overlap
+# - SECTOR_RETRIES=5
+
+# Archival Quality Configuration (maximum preservation):
+# - COMPRESSION_LEVEL=8
+# - PRESERVE_HTOA=true
+# - GAP_HANDLING=preserve
+# - CREATE_CUE=true
+# - CREATE_LOG=true
+# - ENABLE_GAP_DETECTION=true
