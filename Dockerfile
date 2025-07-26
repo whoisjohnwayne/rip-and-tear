@@ -18,6 +18,7 @@ RUN apk update && \
         cdrkit \
         libcdio \
         cdrdao \
+        cd-discid \
         # Build dependencies (permanent for Python packages that need compilation)
         gcc \
         g++ \

@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  rip-and-tear:
+    image: ghcr.io/whoisjohnwayne/rip-and-tear:latest
+    container_name: rip-and-tear
+    privileged: true  # ESSENTIAL for CD drive access
+    ports:
+      - "8080:8080"
+    volumes:
+      - rip_and_tear_config:/config
+      - rip_and_tear_output:/output
+      - rip_and_tear_logs:/logs
+      - /dev:/dev  # Full device access
+    devices:
+      # Map multiple possible CD drive locations
+      - /dev/sr0:/dev/sr0      # Most common SCSI CD drive
+      - /dev/sr1:/dev/sr1      # Second SCSI CD drive (if exists)
+      - /dev/cdrom:/dev/cdrom  # Symlink (if exists)
+    environment:
+      - OUTPUT_DIR=/output
+      - CONFIG_DIR=/config
+      - LOG_DIR=/logs
+      - PYTHONUNBUFFERED=1
+      
+      # Try sr0 first, then fallback to cdrom
+      - CD_DEVICE=/dev/sr0
+      
+      # Ripping Configuration  
+      - TRY_BURST_FIRST=true
+      - USE_ACCURATERIP=true
+      - PARANOIA_MODE=full
+      - MAX_RETRIES=10
+      - SECTOR_RETRIES=20
+      - SELECTIVE_RERIP=true
+      
+      # Output Configuration
+      - OUTPUT_FORMAT=flac
+      - COMPRESSION_LEVEL=8
+      - CREATE_CUE=true
+      - CREATE_LOG=true
+      
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  rip_and_tear_config:
+    driver: local
+  rip_and_tear_output:
+    driver: local  
+  rip_and_tear_logs:
+    driver: local
