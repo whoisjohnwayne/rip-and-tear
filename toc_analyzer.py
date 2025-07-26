@@ -109,8 +109,10 @@ class TOCAnalyzer:
     def _get_toc_cdparanoia(self) -> Optional[Dict[str, Any]]:
         """Get TOC using cdparanoia"""
         result = subprocess.run(
-            ['cdparanoia', '-Q', f'--device={self.device}'],
-            capture_output=True, text=True, timeout=30
+            ['cdparanoia', '-Q', '-d', self.device],
+            capture_output=True,
+            text=True,
+            timeout=30
         )
         
         if result.returncode != 0:
@@ -121,7 +123,7 @@ class TOCAnalyzer:
     def _get_toc_cdrdao(self) -> Optional[Dict[str, Any]]:
         """Get TOC using cdrdao for enhanced gap detection"""
         result = subprocess.run(
-            ['cdrdao', 'disk-info', f'--device={self.device}'],
+            ['cdrdao', 'disk-info', '--device', self.device],
             capture_output=True, text=True, timeout=30
         )
         
@@ -206,7 +208,7 @@ class TOCAnalyzer:
         try:
             # Check if there's audio before track 1
             result = subprocess.run([
-                'cdparanoia', f'--device={self.device}', 
+                'cdparanoia', '-d', self.device, 
                 '--query', '--verbose'
             ], capture_output=True, text=True, timeout=30)
             

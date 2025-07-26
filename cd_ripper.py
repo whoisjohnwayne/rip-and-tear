@@ -127,7 +127,7 @@ class CDRipper:
         try:
             # Use cdparanoia to get TOC
             result = subprocess.run(
-                ['cdparanoia', '-Q', f'--device={device}'],
+                ['cdparanoia', '-Q', '-d', device],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -239,7 +239,7 @@ class CDRipper:
                 # Enhanced ripping with gap handling
                 cmd = [
                     'cdparanoia',
-                    f'--device={device}',
+                    '-d', device,
                     '--batch',
                     '--never-skip',
                 ]
@@ -294,7 +294,7 @@ class CDRipper:
                 # Use cdparanoia in paranoia mode
                 cmd = [
                     'cdparanoia',
-                    f'--device={device}',
+                    '-d', device,
                     '--batch',
                     f'--paranoia-mode={self.config["ripping"]["paranoia_mode"]}',
                     f'--retry-count={self.config["ripping"]["max_retries"]}',
@@ -402,7 +402,7 @@ class CDRipper:
                 # Use cdparanoia in paranoia mode for this specific track
                 cmd = [
                     'cdparanoia',
-                    f'--device={device}',
+                    '-d', device,
                     '--batch',
                     f'--paranoia-mode={self.config["ripping"]["paranoia_mode"]}',
                     f'--retry-count={self.config["ripping"]["max_retries"]}',

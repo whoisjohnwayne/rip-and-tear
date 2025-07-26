@@ -26,7 +26,7 @@ services:
       - PYTHONUNBUFFERED=1
       
       # CD Drive Configuration
-      - CD_DEVICE=/dev/cdrom
+      - CD_DEVICE=/dev/sr0              # Most common CD drive location
       - DRIVE_OFFSET=0              # Drive offset correction in samples
       - DRIVE_SPEED=max             # Ripping speed: "max" or number like "8"
       - ENABLE_C2=false             # Enable C2 error detection

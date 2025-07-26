@@ -31,6 +31,13 @@ echo "🔧 Removing redundant setup scripts..."
 remove_file "setup.sh" "duplicates Docker functionality"
 remove_file "configure.sh" "replaced by environment variables and validation script"
 
+# Remove temporary debug files
+echo
+echo "🧹 Removing debug and temporary files..."
+remove_file "Dockerfile.minimal" "temporary workaround - no longer needed"
+remove_file "debug-pip-install.sh" "debugging script - no longer needed"
+remove_file "add-license-headers.sh" "development script - not needed for production"
+
 # Keep Makefile as it's useful for development - just notify
 if [ -f "Makefile" ]; then
     echo "ℹ️  Keeping Makefile (useful for development commands)"

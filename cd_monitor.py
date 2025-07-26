@@ -66,7 +66,7 @@ class CDMonitor:
         try:
             # Try to read the CD table of contents
             result = subprocess.run(
-                ['cdparanoia', '-Q', f'--device={device}'],
+                ['cdparanoia', '-Q', '-d', device],
                 capture_output=True,
                 text=True,
                 timeout=10
@@ -104,7 +104,7 @@ class CDMonitor:
             
             # Fallback: use cdparanoia to get track count as a simple ID
             result = subprocess.run(
-                ['cdparanoia', '-Q', f'--device={device}'],
+                ['cdparanoia', '-Q', '-d', device],
                 capture_output=True,
                 text=True,
                 timeout=10

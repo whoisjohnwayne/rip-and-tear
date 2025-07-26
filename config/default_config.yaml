@@ -2,7 +2,7 @@
 # This file contains all configuration options for the CD ripper
 
 cd_drive:
-  device: "/dev/cdrom"
+  device: "/dev/sr0"  # Most common CD drive location on Linux
   offset: 0  # Drive offset correction in samples (check accuraterip.com for your drive)
   speed: "max"  # Ripping speed: "max", or specific number like "8"
   enable_c2: false  # Enable C2 error detection if supported by drive

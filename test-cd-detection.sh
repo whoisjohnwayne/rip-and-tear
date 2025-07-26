@@ -20,7 +20,7 @@ echo "2. 🎵 Testing cdparanoia..."
 if command -v cdparanoia >/dev/null 2>&1; then
     echo "✅ cdparanoia is available"
     echo "Testing CD query (insert a CD first):"
-    timeout 10s cdparanoia -Q --device=/dev/cdrom 2>&1 | head -10
+    timeout 10s cdparanoia -Q -d /dev/cdrom 2>&1 | head -10
 else
     echo "❌ cdparanoia not found"
 fi
@@ -53,7 +53,7 @@ print(f'Testing device: {device}')
 
 try:
     # Test cdparanoia
-    result = subprocess.run(['cdparanoia', '-Q', f'--device={device}'], 
+    result = subprocess.run(['cdparanoia', '-Q', '-d', device], 
                           capture_output=True, text=True, timeout=5)
     
     if result.returncode == 0 and 'track' in result.stderr.lower():
