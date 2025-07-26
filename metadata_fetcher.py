@@ -34,6 +34,27 @@ class MetadataFetcher:
         if config['metadata']['musicbrainz_server'] != 'musicbrainz.org':
             mb.set_hostname(config['metadata']['musicbrainz_server'])
     
+    def _safe_get(self, data, *keys, default=None):
+        """Safely navigate nested dictionary structure"""
+        current = data
+        for key in keys:
+            if not isinstance(current, dict) or key not in current:
+                return default
+            current = current[key]
+        return current if current is not None else default
+    
+    def _safe_get_string(self, data, *keys, default=''):
+        """Safely get string value from nested dictionary"""
+        value = self._safe_get(data, *keys, default=default)
+        return str(value) if value is not None else default
+    
+    def _safe_get_list(self, data, *keys, default=None):
+        """Safely get list value from nested dictionary"""
+        if default is None:
+            default = []
+        value = self._safe_get(data, *keys, default=default)
+        return value if isinstance(value, list) else default
+    
     def get_metadata(self, toc_info: Dict[str, Any]) -> Dict[str, Any]:
         """Get metadata for the CD with robust error handling"""
         # Check if automatic metadata fetching is disabled
@@ -165,22 +186,62 @@ class MetadataFetcher:
             medium_list = release_data.get('medium-list', [])
             if medium_list:
                 for medium in medium_list:
+                    if not isinstance(medium, dict):
+                        continue
+                        
                     track_list = medium.get('track-list', [])
                     for track in track_list:
                         if not isinstance(track, dict):
                             continue
-                            
-                        # Safe track recording access
-                        recording = track.get('recording', {})
-                        track_title = track.get('title') or recording.get('title', 'Unknown Track')
                         
-                        track_info = {
-                            'title': track_title,
-                            'artist': self._get_artist_name(track.get('artist-credit', []) or recording.get('artist-credit', [])),
-                            'length': track.get('length') or recording.get('length'),
-                            'position': track.get('position', len(metadata['tracks']) + 1)
-                        }
-                        metadata['tracks'].append(track_info)
+                        try:
+                            # Safe track recording access
+                            recording = track.get('recording', {})
+                            if not isinstance(recording, dict):
+                                recording = {}
+                            
+                            # Safe title extraction
+                            track_title = track.get('title') or recording.get('title')
+                            if not track_title or not isinstance(track_title, str):
+                                track_title = 'Unknown Track'
+                            
+                            # Safe artist credit extraction
+                            track_artist_credit = track.get('artist-credit', [])
+                            recording_artist_credit = recording.get('artist-credit', [])
+                            
+                            # Use track artist credit first, fallback to recording
+                            artist_credit = track_artist_credit if track_artist_credit else recording_artist_credit
+                            track_artist = self._get_artist_name(artist_credit)
+                            
+                            # Safe length extraction
+                            track_length = track.get('length') or recording.get('length')
+                            
+                            # Safe position extraction
+                            position = track.get('position')
+                            if not isinstance(position, int):
+                                position = len(metadata['tracks']) + 1
+                            
+                            track_info = {
+                                'title': track_title,
+                                'artist': track_artist,
+                                'length': track_length,
+                                'position': position
+                            }
+                            metadata['tracks'].append(track_info)
+                            
+                        except (AttributeError, KeyError, TypeError) as e:
+                            self.logger.warning(f"Error processing track data: {e}")
+                            # Add a default track instead of failing completely
+                            track_num = len(metadata['tracks']) + 1
+                            metadata['tracks'].append({
+                                'title': f'Track {track_num:02d}',
+                                'artist': metadata['artist'],
+                                'length': None,
+                                'position': track_num
+                            })
+                        except Exception as e:
+                            self.logger.warning(f"Unexpected error processing track: {e}")
+                            continue
             
             # Pad with default tracks if we don't have enough
             while len(metadata['tracks']) < expected_tracks:
@@ -199,51 +260,140 @@ class MetadataFetcher:
             self.logger.debug(f"Release data structure: {release}")
             return None
     
-    def _get_artist_name(self, artist_credit: List) -> str:
-        """Extract artist name from artist credit with safe access"""
+    def _get_artist_name(self, artist_credit) -> str:
+        """Extract artist name from artist credit with comprehensive field support"""
         try:
             if not artist_credit:
                 return 'Unknown Artist'
             
+            # Handle various artist credit formats from MusicBrainz
             if isinstance(artist_credit, list) and len(artist_credit) > 0:
                 first_credit = artist_credit[0]
                 if isinstance(first_credit, dict):
-                    # Try artist.name first
-                    if 'artist' in first_credit:
-                        artist = first_credit['artist']
-                        if isinstance(artist, dict) and 'name' in artist:
-                            return artist['name']
+                    
+                    # Try artist.name (most common structure)
+                    artist_name = self._safe_get_string(first_credit, 'artist', 'name')
+                    if artist_name and artist_name != '':
+                        return artist_name
+                    
+                    # Try artist.sort-name as fallback
+                    artist_sort_name = self._safe_get_string(first_credit, 'artist', 'sort-name')
+                    if artist_sort_name and artist_sort_name != '':
+                        return artist_sort_name
                     
                     # Try direct name field
-                    if 'name' in first_credit:
-                        return first_credit['name']
+                    direct_name = self._safe_get_string(first_credit, 'name')
+                    if direct_name and direct_name != '':
+                        return direct_name
+                    
+                    # Try credited-as name (for aliased credits)
+                    credited_as = self._safe_get_string(first_credit, 'credited-as')
+                    if credited_as and credited_as != '':
+                        return credited_as
+                    
+                    # Handle artist disambiguation fields gracefully
+                    # MusicBrainz can return: type, type-id, gender, gender-id, 
+                    # country, area, begin-area, end-area, life-span, etc.
+                    # We just want the name, so we ignore these extra fields
+                    
+                    # Try any other name-like fields
+                    for name_field in ['display-name', 'credit-name', 'artist-name']:
+                        name_value = self._safe_get_string(first_credit, name_field)
+                        if name_value and name_value != '':
+                            return name_value
+            
+            # Handle single artist credit (not in list)
+            elif isinstance(artist_credit, dict):
+                artist_name = self._safe_get_string(artist_credit, 'name')
+                if artist_name and artist_name != '':
+                    return artist_name
             
             return 'Unknown Artist'
             
         except Exception as e:
-            self.logger.warning(f"Error extracting artist name: {e}")
+            self.logger.warning(f"Unexpected error extracting artist name: {type(e).__name__}: {e}")
+            self.logger.debug(f"Artist credit data type: {type(artist_credit)}")
             return 'Unknown Artist'
     
     def _get_release_date(self, release_data: Dict) -> str:
-        """Extract release date with safe access"""
+        """Extract release date with comprehensive field support"""
         try:
-            # Try main date field first
-            date = release_data.get('date', '')
-            if date and isinstance(date, str):
-                # Extract year from full date
-                return date.split('-')[0]
+            # All possible date fields that MusicBrainz might return
+            date_fields = [
+                'date',                    # Primary date field
+                'first-release-date',      # First release date
+                'release-date',            # Release date
+                'original-release-date',   # Original release date
+                'recording-date',          # Recording date
+                'earliest-release-date'    # Earliest known release
+            ]
             
-            # Try other date fields
-            for date_field in ['first-release-date', 'release-date']:
-                if date_field in release_data:
-                    date = release_data[date_field]
-                    if date and isinstance(date, str):
-                        return date.split('-')[0]
+            # Try each date field
+            for date_field in date_fields:
+                date_value = self._safe_get_string(release_data, date_field)
+                if date_value and date_value.strip():
+                    # Extract year from date (handle various formats)
+                    try:
+                        # Handle YYYY, YYYY-MM, YYYY-MM-DD formats
+                        year = date_value.split('-')[0]
+                        if year.isdigit() and len(year) == 4:
+                            return year
+                    except (ValueError, IndexError):
+                        continue
+            
+            # Try release-event-list (contains area and date info)
+            release_events = self._safe_get_list(release_data, 'release-event-list')
+            for event in release_events:
+                if isinstance(event, dict):
+                    # Try date field in release event
+                    event_date = self._safe_get_string(event, 'date')
+                    if event_date and event_date.strip():
+                        try:
+                            year = event_date.split('-')[0]
+                            if year.isdigit() and len(year) == 4:
+                                return year
+                        except (ValueError, IndexError):
+                            continue
+                    
+                    # Try area.date or other nested date fields
+                    area_date = self._safe_get_string(event, 'area', 'date')
+                    if area_date and area_date.strip():
+                        try:
+                            year = area_date.split('-')[0]
+                            if year.isdigit() and len(year) == 4:
+                                return year
+                        except (ValueError, IndexError):
+                            continue
+            
+            # Try label-info-list for label release dates
+            label_info_list = self._safe_get_list(release_data, 'label-info-list')
+            for label_info in label_info_list:
+                if isinstance(label_info, dict):
+                    label_date = self._safe_get_string(label_info, 'label', 'date')
+                    if label_date and label_date.strip():
+                        try:
+                            year = label_date.split('-')[0]
+                            if year.isdigit() and len(year) == 4:
+                                return year
+                        except (ValueError, IndexError):
+                            continue
+            
+            # Try cover-art-archive date as last resort
+            caa_date = self._safe_get_string(release_data, 'cover-art-archive', 'date')
+            if caa_date and caa_date.strip():
+                try:
+                    year = caa_date.split('-')[0]
+                    if year.isdigit() and len(year) == 4:
+                        return year
+                except (ValueError, IndexError):
+                    pass
             
             return ''
             
         except Exception as e:
-            self.logger.warning(f"Error extracting release date: {e}")
+            self.logger.warning(f"Unexpected error extracting release date: {type(e).__name__}: {e}")
+            available_fields = list(release_data.keys()) if isinstance(release_data, dict) else []
+            self.logger.debug(f"Available release data fields: {available_fields}")
             return ''
     
     def _get_default_metadata(self, toc_info: Dict[str, Any]) -> Dict[str, Any]:
