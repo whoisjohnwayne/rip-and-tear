@@ -73,7 +73,7 @@ class CDRipper:
             
             # Fetch metadata
             self._update_status(RipStatus.FETCHING_METADATA)
-            metadata = self.metadata_fetcher.get_metadata(disc_info)
+            metadata = self.metadata_fetcher.get_metadata(disc_info.to_dict())
             
             # Create output directory for this album
             album_dir = self._create_album_directory(metadata)

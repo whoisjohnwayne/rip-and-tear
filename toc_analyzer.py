@@ -35,6 +35,33 @@ class DiscInfo:
     has_cd_text: bool = False
     disc_id: Optional[str] = None
     catalog_number: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format for metadata fetcher"""
+        return {
+            'total_sectors': self.total_sectors,
+            'leadout_sector': self.leadout_sector,
+            'first_track': self.first_track,
+            'last_track': self.last_track,
+            'tracks': [
+                {
+                    'number': track.number,
+                    'start_sector': track.start_sector,
+                    'end_sector': track.end_sector,
+                    'length_sectors': track.length_sectors,
+                    'length_seconds': track.length_seconds,
+                    'pre_gap': track.pre_gap,
+                    'post_gap': track.post_gap,
+                    'has_htoa': track.has_htoa,
+                    'isrc': track.isrc,
+                    'cd_text': track.cd_text
+                }
+                for track in self.tracks
+            ],
+            'has_cd_text': self.has_cd_text,
+            'disc_id': self.disc_id,
+            'catalog_number': self.catalog_number
+        }
 
 class TOCAnalyzer:
     """Advanced TOC analysis with EAC-level precision"""
@@ -152,21 +179,36 @@ class TOCAnalyzer:
         tracks = []
         
         try:
-            # Use cdrdao for precise gap detection
+            # Use cdrdao for precise gap detection (increase timeout for complex discs)
+            timeout = self.config.get('ripping', {}).get('gap_analysis_timeout', 300)  # 5 minutes default
+            self.logger.info(f"Starting gap analysis with {timeout}s timeout...")
+            
             result = subprocess.run(
                 ['cdrdao', 'read-toc', '--device', self.device, '/tmp/temp.toc'],
-                capture_output=True, text=True, timeout=60
+                capture_output=True, text=True, timeout=timeout
             )
             
             if result.returncode == 0:
                 tracks = self._parse_gap_analysis('/tmp/temp.toc')
+                if not tracks:
+                    self.logger.warning("Gap analysis parsing failed, using basic tracks")
+                    tracks = self._create_basic_tracks(basic_toc)
             else:
-                # Fallback to basic track info
+                self.logger.warning(f"cdrdao failed with return code {result.returncode}")
+                if result.stderr:
+                    self.logger.warning(f"cdrdao error: {result.stderr[:200]}")
                 tracks = self._create_basic_tracks(basic_toc)
                 
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"Gap analysis timed out after {timeout}s - using basic track info")
+            tracks = self._create_basic_tracks(basic_toc)
         except Exception as e:
             self.logger.warning(f"Gap analysis failed: {e}")
             tracks = self._create_basic_tracks(basic_toc)
+            
+        if not tracks:
+            self.logger.error("Failed to create any track information")
+            return []
         
         return tracks
     
@@ -363,17 +405,30 @@ class TOCAnalyzer:
     def _create_basic_tracks(self, basic_toc: Dict[str, Any]) -> List[TrackInfo]:
         """Create basic track info when detailed analysis fails"""
         tracks = []
+        
+        if not basic_toc or 'tracks' not in basic_toc:
+            self.logger.error("Invalid basic_toc data for creating tracks")
+            return tracks
+            
         current_sector = 0
         
-        for track_data in basic_toc['tracks']:
-            track = TrackInfo(
-                number=track_data['number'],
-                start_sector=current_sector,
-                length_sectors=track_data.get('sectors', 0),
-                track_type='audio'
-            )
-            tracks.append(track)
-            current_sector += track.length_sectors
+        try:
+            for track_data in basic_toc['tracks']:
+                if not isinstance(track_data, dict):
+                    self.logger.warning(f"Invalid track data format: {track_data}")
+                    continue
+                    
+                track = TrackInfo(
+                    number=track_data.get('number', len(tracks) + 1),
+                    start_sector=current_sector,
+                    length_sectors=track_data.get('sectors', 0),
+                    track_type='audio'
+                )
+                tracks.append(track)
+                current_sector += track.length_sectors
+        except Exception as e:
+            self.logger.error(f"Error creating basic tracks: {e}")
+            self.logger.error(f"basic_toc content: {basic_toc}")
         
         return tracks
     

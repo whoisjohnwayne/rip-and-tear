@@ -24,6 +24,7 @@ ripping:
   max_retries: 10
   sector_retries: 20  # Retries per sector for problematic areas
   enable_gap_detection: true  # Detect gaps between tracks
+  gap_analysis_timeout: 300  # Gap analysis timeout in seconds (5 minutes for complex discs)
   read_lead_in: true  # Read lead-in area for HTOA detection
   multiple_read_verification: true  # Read tracks multiple times for verification
   verify_rerip: true  # Verify re-ripped tracks immediately
