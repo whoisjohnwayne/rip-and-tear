@@ -287,6 +287,16 @@
             const ripDetails = document.getElementById('rip-details');
             const trackInfo = document.getElementById('track-info');
             const progressBar = document.getElementById('progress-bar');
+            const cdStatus = document.getElementById('cd-status');
+            
+            // Update CD status
+            if (status.cd_present) {
+                cdStatus.textContent = 'CD Present';
+                cdStatus.className = 'status-value status-success';
+            } else {
+                cdStatus.textContent = 'No CD';
+                cdStatus.className = 'status-value status-idle';
+            }
             
             // Update rip status
             ripStatus.textContent = status.status.replace('_', ' ').toUpperCase();

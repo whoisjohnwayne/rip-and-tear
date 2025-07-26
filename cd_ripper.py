@@ -565,13 +565,40 @@ class CDRipper:
         if error_msg:
             self.logger.error(error_msg)
     
+    def _check_cd_present(self) -> bool:
+        """Check if a CD is present in the drive"""
+        try:
+            # Try to read the CD table of contents
+            result = subprocess.run(
+                ['cdparanoia', '-Q', '-d', self.device],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            # If cdparanoia can read the TOC, a CD is present
+            return result.returncode == 0 and 'track' in result.stderr.lower()
+            
+        except subprocess.TimeoutExpired:
+            self.logger.warning("CD check timed out")
+            return False
+        except FileNotFoundError:
+            self.logger.error("cdparanoia not found")
+            return False
+        except Exception as e:
+            self.logger.debug(f"Error checking CD presence: {e}")
+            return False
+
     def get_status(self) -> Dict[str, Any]:
         """Get current ripping status"""
+        cd_present = self._check_cd_present()
+        
         return {
             'status': self.status,
             'progress': self.progress,
             'current_track': self.current_track,
             'total_tracks': self.total_tracks,
             'error_message': self.error_message,
-            'start_time': self.rip_start_time.isoformat() if self.rip_start_time else None
+            'start_time': self.rip_start_time.isoformat() if self.rip_start_time else None,
+            'cd_present': cd_present
         }
