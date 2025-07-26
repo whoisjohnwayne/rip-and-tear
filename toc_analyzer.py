@@ -438,19 +438,20 @@ class TOCAnalyzer:
             line = line.strip()
             self.logger.debug(f"Line {line_num}: '{line}'")
             
-            # cdparanoia -Q output format is typically:
-            # "        1.  3:42.15   16757 [16:22.67]"
-            # Track number, duration, sectors, [cumulative time]
-            track_pattern = r'^\s*(\d+)\.\s+(\d+):(\d+)\.(\d+)\s+(\d+)\s+\[.*\]'
+            # Real cdparanoia -Q output format:
+            # " 1. 19497 [04:19.72] 0 [00:00.00] OK no 2"
+            # Track number, sectors, [duration], start_sector, [start_time], status, pre, ch
+            track_pattern = r'^\s*(\d+)\.\s+(\d+)\s+\[(\d+):(\d+)\.(\d+)\]\s+(\d+)\s+\[.*\]\s+\w+.*'
             track_match = re.match(track_pattern, line)
             
             if track_match:
                 try:
                     track_num = int(track_match.group(1))
-                    minutes = int(track_match.group(2))
-                    seconds = int(track_match.group(3))
-                    frames = int(track_match.group(4))
-                    sectors = int(track_match.group(5))
+                    sectors = int(track_match.group(2))
+                    minutes = int(track_match.group(3))
+                    seconds = int(track_match.group(4))
+                    frames = int(track_match.group(5))
+                    start_sector = int(track_match.group(6))
                     
                     # Validate track number
                     if track_num <= 0 or track_num > 99:
@@ -462,47 +463,30 @@ class TOCAnalyzer:
                         'number': track_num,
                         'duration': duration,
                         'sectors': sectors,
+                        'start_sector': start_sector,
                         'type': 'audio'
                     })
                     total_sectors += sectors
-                    self.logger.info(f"✓ Found track {track_num}: {duration} ({sectors} sectors)")
+                    self.logger.info(f"✓ Found track {track_num}: {duration} ({sectors} sectors, start: {start_sector})")
                     
                 except (ValueError, IndexError) as e:
                     self.logger.warning(f"Could not parse track from line '{line}': {e}")
                     
-            # Look for total length line: "Total length: 45:23.67   203742 sectors"
-            elif line.lower().startswith('total length:'):
-                total_pattern = r'total length:\s+\d+:\d+\.\d+\s+(\d+)\s+sectors'
+            # Look for any total information if present
+            elif 'total' in line.lower() and 'sectors' in line.lower():
+                total_pattern = r'(\d+)\s+sectors'
                 total_match = re.search(total_pattern, line, re.IGNORECASE)
                 if total_match:
                     leadout_sector = int(total_match.group(1))
                     self.logger.info(f"✓ Found total: {leadout_sector} sectors")
-                    
-            # Alternative format check - some versions might output differently
-            # Look for any line with track-like format as fallback
-            elif not tracks:  # Only if we haven't found tracks yet
-                # Fallback pattern for different cdparanoia versions
-                fallback_pattern = r'(\d+)[\.\s]+.*?(\d+)\s+sectors'
-                fallback_match = re.search(fallback_pattern, line, re.IGNORECASE)
-                if fallback_match:
-                    try:
-                        track_num = int(fallback_match.group(1))
-                        sectors = int(fallback_match.group(2))
-                        
-                        if 1 <= track_num <= 99 and sectors > 1000:  # Reasonable track
-                            duration = f"{sectors//75//60}:{(sectors//75)%60:02d}.{sectors%75:02d}"
-                            tracks.append({
-                                'number': track_num,
-                                'duration': duration,
-                                'sectors': sectors,
-                                'type': 'audio'
-                            })
-                            self.logger.info(f"✓ Found track {track_num} (fallback): {duration} ({sectors} sectors)")
-                    except (ValueError, IndexError):
-                        pass
         
         # Sort tracks by track number
         tracks.sort(key=lambda t: t['number'])
+        
+        # Calculate total sectors if not found
+        if not leadout_sector and tracks:
+            last_track = tracks[-1]
+            leadout_sector = last_track['start_sector'] + last_track['sectors']
         
         self.logger.info(f"✓ Successfully parsed {len(tracks)} tracks from cdparanoia")
         
@@ -510,7 +494,7 @@ class TOCAnalyzer:
             self.logger.error("❌ No tracks found in cdparanoia output")
             # Log the raw output for debugging
             self.logger.error("Raw output was:")
-            for i, line in enumerate(lines[:10]):  # First 10 lines
+            for i, line in enumerate(lines[:20]):  # First 20 lines for more context
                 self.logger.error(f"  {i}: '{line}'")
             return {
                 'tracks': [],
@@ -520,13 +504,24 @@ class TOCAnalyzer:
                 'last_track': 0
             }
         
-        return {
+        result = {
             'tracks': tracks,
-            'total_sectors': total_sectors if total_sectors > 0 else leadout_sector,
+            'total_sectors': leadout_sector if leadout_sector > 0 else total_sectors,
             'leadout_sector': leadout_sector if leadout_sector > 0 else total_sectors,
             'first_track': tracks[0]['number'],
             'last_track': tracks[-1]['number']
         }
+        
+        self.logger.info(f"=== PARSE RESULT ===")
+        self.logger.info(f"Result keys: {list(result.keys())}")
+        self.logger.info(f"Tracks count: {len(result['tracks'])}")
+        self.logger.info(f"Total sectors: {result['total_sectors']}")
+        self.logger.info(f"Track range: {result['first_track']}-{result['last_track']}")
+        for track in result['tracks']:
+            self.logger.info(f"  Track {track['number']}: {track['sectors']} sectors")
+        self.logger.info(f"=== END PARSE RESULT ===")
+        
+        return result
     
     def _parse_cdrdao_output(self, output: str) -> Optional[Dict[str, Any]]:
         """Parse cdrdao disk-info output"""
@@ -542,38 +537,50 @@ class TOCAnalyzer:
         """Create basic track info from parsed TOC data"""
         tracks = []
         
+        self.logger.info(f"=== _create_basic_tracks DEBUG ===")
+        self.logger.info(f"basic_toc type: {type(basic_toc)}")
+        self.logger.info(f"basic_toc keys: {list(basic_toc.keys()) if basic_toc else 'None'}")
+        self.logger.info(f"basic_toc content: {basic_toc}")
+        
         if not basic_toc:
             self.logger.error("No basic_toc data available for creating tracks")
             return []
             
         # Try to extract track info from TOC data
         track_data = basic_toc.get('tracks', [])
+        self.logger.info(f"track_data type: {type(track_data)}")
+        self.logger.info(f"track_data length: {len(track_data) if track_data else 0}")
+        self.logger.info(f"track_data content: {track_data}")
+        
         if not track_data:
             self.logger.error("No track data found in TOC")
             return []
             
-        current_sector = 0
-        
         try:
-            for track_info in track_data:
+            for i, track_info in enumerate(track_data):
+                self.logger.info(f"Processing track {i}: {track_info}")
                 if not isinstance(track_info, dict):
                     self.logger.warning(f"Invalid track data format: {track_info}")
                     continue
                     
+                # Use start_sector from parsed data if available, otherwise calculate
+                start_sector = track_info.get('start_sector', 0)
+                
                 track = TrackInfo(
                     number=track_info.get('number', len(tracks) + 1),
-                    start_sector=current_sector,
+                    start_sector=start_sector,
                     length_sectors=track_info.get('sectors', 0),
                     track_type='audio'
                 )
                 tracks.append(track)
-                current_sector += track.length_sectors
+                self.logger.info(f"✓ Created track {track.number}: {track.length_sectors} sectors, start: {track.start_sector}")
                 
         except Exception as e:
             self.logger.error(f"Error creating basic tracks: {e}")
             self.logger.error(f"basic_toc content: {basic_toc}")
             return []
         
+        self.logger.info(f"=== _create_basic_tracks RESULT: {len(tracks)} tracks ===")
         return tracks
     
     def _log_disc_analysis(self, disc_info: DiscInfo):
