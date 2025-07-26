@@ -245,8 +245,8 @@ class CDRipper:
                 cmd = [
                     'cdparanoia',
                     '-d', device,
-                    '--batch',
-                    '--never-skip',
+                    '-Z',  # Disable all paranoia checks for speed (burst mode)
+                    '-z',  # Never ask, never tell
                 ]
                 
                 # Handle pre-gaps and HTOA
@@ -256,7 +256,7 @@ class CDRipper:
                     htoa_cmd = cmd + [f'-{track.htoa_length//75}', str(htoa_file)]
                     
                     if self.config['cd_drive']['offset'] != 0:
-                        htoa_cmd.extend(['--sample-offset', str(self.config['cd_drive']['offset'])])
+                        htoa_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                     
                     self.logger.info(f"Ripping HTOA ({track.htoa_length/75:.2f} seconds)")
                     subprocess.run(htoa_cmd, capture_output=True, text=True, timeout=600)
@@ -265,7 +265,7 @@ class CDRipper:
                 track_cmd = cmd + [f'{i}', str(track_file)]
                 
                 if self.config['cd_drive']['offset'] != 0:
-                    track_cmd.extend(['--sample-offset', str(self.config['cd_drive']['offset'])])
+                    track_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
                 result = subprocess.run(track_cmd, capture_output=True, text=True, timeout=600)
                 
@@ -300,15 +300,14 @@ class CDRipper:
                 cmd = [
                     'cdparanoia',
                     '-d', device,
-                    '--batch',
-                    f'--paranoia-mode={self.config["ripping"]["paranoia_mode"]}',
-                    f'--retry-count={self.config["ripping"]["max_retries"]}',
+                    '-z',  # Never ask, never tell
                     f'{i}',
                     str(track_file)
                 ]
                 
+                # Add sample offset if configured (using -O flag)
                 if self.config['cd_drive']['offset'] != 0:
-                    cmd.extend(['--sample-offset', str(self.config['cd_drive']['offset'])])
+                    cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
                 
@@ -408,15 +407,14 @@ class CDRipper:
                 cmd = [
                     'cdparanoia',
                     '-d', device,
-                    '--batch',
-                    f'--paranoia-mode={self.config["ripping"]["paranoia_mode"]}',
-                    f'--retry-count={self.config["ripping"]["max_retries"]}',
+                    '-z',  # Never ask, never tell
                     f'{track_num}',
                     str(track_file)
                 ]
                 
+                # Add sample offset if configured (using -O flag)
                 if self.config['cd_drive']['offset'] != 0:
-                    cmd.extend(['--sample-offset', str(self.config['cd_drive']['offset'])])
+                    cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
                 self.logger.info(f"Re-ripping track {track_num} in paranoia mode...")
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
