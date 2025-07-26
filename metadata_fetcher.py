@@ -4,8 +4,14 @@ Metadata Fetcher - Fetches CD metadata from MusicBrainz
 """
 
 import logging
-import musicbrainzngs as mb
 from typing import Dict, Any, List, Optional
+
+try:
+    import musicbrainzngs as mb
+    MUSICBRAINZ_AVAILABLE = True
+except ImportError:
+    mb = None
+    MUSICBRAINZ_AVAILABLE = False
 
 class MetadataFetcher:
     """Fetches metadata from MusicBrainz"""
@@ -13,6 +19,10 @@ class MetadataFetcher:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logger = logging.getLogger(__name__)
+        
+        if not MUSICBRAINZ_AVAILABLE:
+            self.logger.warning("MusicBrainz package not available - metadata fetching disabled")
+            return
         
         # Configure MusicBrainz
         mb.set_useragent(

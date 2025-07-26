@@ -1,33 +1,39 @@
 FROM alpine:3.18
 
-# Update package index
-RUN apk update
+# Install all system dependencies including build tools
+RUN apk update && \
+    apk add --no-cache \
+        python3 \
+        py3-pip \
+        bash \
+        curl \
+        tini \
+        shadow \
+        su-exec \
+        udev \
+        util-linux \
+        # Audio tools
+        cdparanoia \
+        flac \
+        cdrtools \
+        libcdio \
+        cdrdao \
+        # Build dependencies (permanent for Python packages that need compilation)
+        gcc \
+        g++ \
+        musl-dev \
+        python3-dev \
+        linux-headers \
+        libffi-dev \
+        openssl-dev \
+        rust \
+        cargo \
+        pkgconfig \
+        make
 
-# Install essential packages
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    bash \
-    curl \
-    gcc \
-    musl-dev \
-    python3-dev
-
-# Install audio packages (these should exist in Alpine)
-RUN apk add --no-cache \
-    cdparanoia \
-    flac
-
-# Try to install additional tools (fallback if not available)
-RUN apk add --no-cache cdrtools || echo "cdrtools not available, continuing..."
-RUN apk add --no-cache libcdio || echo "libcdio not available, continuing..."  
-RUN apk add --no-cache cdrdao || echo "cdrdao not available, continuing..."
-
-# Create python symlink
-RUN ln -sf python3 /usr/bin/python
-
-# Upgrade pip
-RUN pip3 install --upgrade pip
+# Create python symlink and upgrade pip
+RUN ln -sf python3 /usr/bin/python && \
+    python3 -m pip install --upgrade pip setuptools wheel
 
 # Create app directory
 WORKDIR /app
@@ -35,12 +41,28 @@ WORKDIR /app
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
-# Install Python packages with better error handling
-RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-# Clean up build dependencies to reduce image size
-RUN apk del gcc musl-dev python3-dev
+# Install Python packages with comprehensive error handling
+RUN set -e && \
+    echo "Installing Python packages from requirements.txt..." && \
+    export PIP_DEFAULT_TIMEOUT=300 && \
+    export PIP_RETRIES=3 && \
+    pip3 install --no-cache-dir --verbose --timeout 300 --retries 3 -r requirements.txt || { \
+        echo "Failed to install all packages, trying individually:"; \
+        echo "Installing flask..."; \
+        pip3 install --no-cache-dir --verbose flask || echo "flask failed"; \
+        echo "Installing requests..."; \
+        pip3 install --no-cache-dir --verbose requests || echo "requests failed"; \
+        echo "Installing pyyaml..."; \
+        pip3 install --no-cache-dir --verbose pyyaml || echo "pyyaml failed"; \
+        echo "Installing musicbrainzngs..."; \
+        pip3 install --no-cache-dir --verbose musicbrainzngs || echo "musicbrainzngs failed"; \
+        echo "Installing mutagen..."; \
+        pip3 install --no-cache-dir --verbose mutagen || echo "mutagen failed"; \
+        echo "Installing psutil..."; \
+        pip3 install --no-cache-dir --verbose psutil || echo "psutil failed"; \
+        echo "Installing watchdog..."; \
+        pip3 install --no-cache-dir --verbose watchdog || echo "watchdog failed"; \
+    }
 
 # Copy application files
 COPY . .
