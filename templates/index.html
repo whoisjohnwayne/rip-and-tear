@@ -153,6 +153,13 @@
         .status-success { color: #27ae60; }
         .status-error { color: #e74c3c; }
         
+        .control-buttons {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
         .refresh-btn {
             background: linear-gradient(135deg, #3498db, #2980b9);
             color: white;
@@ -163,12 +170,34 @@
             font-size: 16px;
             font-weight: bold;
             transition: transform 0.2s ease;
-            margin-bottom: 20px;
+        }
+        
+        .cancel-btn {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: transform 0.2s ease;
         }
         
         .refresh-btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+        }
+        
+        .cancel-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.3);
+        }
+        
+        .cancel-btn:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+            transform: none;
         }
         
         .files-section {
@@ -210,7 +239,10 @@
         </div>
         
         <div class="dashboard">
-            <button class="refresh-btn" onclick="refreshData()">🔄 Refresh</button>
+            <div class="control-buttons">
+                <button class="refresh-btn" onclick="refreshData()">🔄 Refresh</button>
+                <button class="cancel-btn" id="cancel-btn" onclick="cancelRip()" style="display: none;">⏹️ Cancel Rip</button>
+            </div>
             
             <div class="status-grid">
                 <div class="status-card">
@@ -288,6 +320,7 @@
             const trackInfo = document.getElementById('track-info');
             const progressBar = document.getElementById('progress-bar');
             const cdStatus = document.getElementById('cd-status');
+            const cancelBtn = document.getElementById('cancel-btn');
             
             // Update CD status
             if (status.cd_present) {
@@ -301,6 +334,15 @@
             // Update rip status
             ripStatus.textContent = status.status.replace('_', ' ').toUpperCase();
             ripStatus.className = 'status-value ' + getStatusClass(status.status);
+            
+            // Show/hide cancel button based on rip status
+            const activeStates = ['ripping_burst', 'ripping_paranoia', 'verifying_accuraterip', 'encoding', 'creating_cue', 'reripping_failed_tracks'];
+            if (activeStates.includes(status.status)) {
+                cancelBtn.style.display = 'inline-block';
+                cancelBtn.disabled = false;
+            } else {
+                cancelBtn.style.display = 'none';
+            }
             
             // Update progress
             if (status.total_tracks > 0) {
@@ -447,6 +489,48 @@
                 albumDiv.appendChild(nameDiv);
                 albumDiv.appendChild(infoDiv);
                 filesList.appendChild(albumDiv);
+            });
+        }
+        
+        function cancelRip() {
+            const cancelBtn = document.getElementById('cancel-btn');
+            
+            // Confirm cancellation
+            if (!confirm('Are you sure you want to cancel the current rip operation?')) {
+                return;
+            }
+            
+            // Disable button and show loading state
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = '⏳ Cancelling...';
+            
+            fetch('/api/cancel', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log('Rip cancelled successfully');
+                    // Refresh status immediately to update UI
+                    setTimeout(refreshData, 500);
+                } else {
+                    console.error('Cancel failed:', data.error);
+                    alert('Failed to cancel rip: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Cancel request error:', error);
+                alert('Failed to send cancel request: ' + error.message);
+            })
+            .finally(() => {
+                // Reset button after a delay
+                setTimeout(() => {
+                    cancelBtn.disabled = false;
+                    cancelBtn.textContent = '⏹️ Cancel Rip';
+                }, 2000);
             });
         }
         

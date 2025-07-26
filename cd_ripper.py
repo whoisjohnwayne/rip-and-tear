@@ -47,6 +47,8 @@ class CDRipper:
         self.total_tracks = 0
         self.error_message = ""
         self.rip_start_time = None
+        self.cancel_requested = False
+        self.current_process = None
         self.metadata_fetcher = MetadataFetcher(config)
         self.cue_generator = CueGenerator()
         self.accuraterip_checker = AccurateRipChecker()
@@ -60,12 +62,21 @@ class CDRipper:
         """Main CD ripping function"""
         try:
             self.rip_start_time = datetime.now()
+            self.cancel_requested = False
             self._update_status(RipStatus.READING_TOC)
+            
+            # Check for cancellation
+            if self._check_cancelled():
+                return False
             
             # Get comprehensive CD information with gap detection
             disc_info = self.toc_analyzer.analyze_disc()
             if not disc_info:
                 self._update_status(RipStatus.ERROR, "Failed to analyze CD structure")
+                return False
+            
+            # Check for cancellation
+            if self._check_cancelled():
                 return False
             
             # Validate that we have tracks
@@ -78,6 +89,11 @@ class CDRipper:
             
             # Fetch metadata
             self._update_status(RipStatus.FETCHING_METADATA)
+            
+            # Check for cancellation
+            if self._check_cancelled():
+                return False
+                
             metadata = self.metadata_fetcher.get_metadata(disc_info.to_dict())
             
             # Create output directory for this album
@@ -85,12 +101,24 @@ class CDRipper:
             
             # Try burst mode rip first
             if self.config['ripping']['try_burst_first']:
+                # Check for cancellation
+                if self._check_cancelled():
+                    return False
+                    
                 self._update_status(RipStatus.RIPPING_BURST)
                 burst_success = self._rip_burst_mode(disc_info, album_dir)
+                
+                # Check for cancellation
+                if self._check_cancelled():
+                    return False
                 
                 if burst_success and self.config['ripping']['use_accuraterip']:
                     self._update_status(RipStatus.VERIFYING_ACCURATERIP)
                     failed_tracks = self._verify_accuraterip_per_track(album_dir, disc_info)
+                    
+                    # Check for cancellation
+                    if self._check_cancelled():
+                        return False
                     
                     if not failed_tracks:
                         self.logger.info("All tracks verified with AccurateRip in burst mode")
@@ -267,7 +295,15 @@ class CDRipper:
                 if self.config['cd_drive']['offset'] != 0:
                     track_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
-                result = subprocess.run(track_cmd, capture_output=True, text=True, timeout=600)
+                # Check for cancellation before ripping
+                if self._check_cancelled():
+                    return False
+                
+                result = self._run_cancellable_subprocess(track_cmd, timeout=600)
+                
+                # Check for cancellation after ripping
+                if self._check_cancelled():
+                    return False
                 
                 if result.returncode != 0:
                     self.logger.error(f"Failed to rip track {i}: {result.stderr}")
@@ -621,3 +657,91 @@ class CDRipper:
             'start_time': self.rip_start_time.isoformat() if self.rip_start_time else None,
             'cd_present': cd_present
         }
+    
+    def cancel_rip(self) -> bool:
+        """Cancel the current ripping operation"""
+        try:
+            if self.status == RipStatus.IDLE:
+                self.logger.warning("No active rip operation to cancel")
+                return False
+            
+            self.logger.info("Cancel requested - attempting to stop current operation")
+            self.cancel_requested = True
+            
+            # Try to terminate any running subprocess
+            if self.current_process and self.current_process.poll() is None:
+                self.logger.info("Terminating current subprocess")
+                try:
+                    self.current_process.terminate()
+                    # Give it a moment to terminate gracefully
+                    try:
+                        self.current_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        # Force kill if it doesn't terminate
+                        self.current_process.kill()
+                        self.current_process.wait()
+                    self.logger.info("Subprocess terminated successfully")
+                except Exception as e:
+                    self.logger.error(f"Error terminating subprocess: {e}")
+            
+            # Update status
+            self._update_status(RipStatus.IDLE, "Operation cancelled by user")
+            self.progress = 0
+            self.current_track = 0
+            self.total_tracks = 0
+            self.rip_start_time = None
+            self.current_process = None
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error during cancellation: {e}")
+            return False
+    
+    def _check_cancelled(self) -> bool:
+        """Check if cancellation has been requested"""
+        if self.cancel_requested:
+            self.logger.info("Operation cancelled - aborting current task")
+            self.cancel_requested = False  # Reset flag
+            return True
+        return False
+    
+    def _run_cancellable_subprocess(self, cmd, timeout=600, **kwargs):
+        """Run a subprocess that can be cancelled"""
+        try:
+            # Start the process
+            self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs)
+            
+            # Wait for completion or cancellation
+            try:
+                stdout, stderr = self.current_process.communicate(timeout=timeout)
+                returncode = self.current_process.returncode
+                self.current_process = None
+                
+                # Create a result object similar to subprocess.run
+                class ProcessResult:
+                    def __init__(self, returncode, stdout, stderr):
+                        self.returncode = returncode
+                        self.stdout = stdout
+                        self.stderr = stderr
+                
+                return ProcessResult(returncode, stdout, stderr)
+                
+            except subprocess.TimeoutExpired:
+                # Process timed out
+                if self.current_process:
+                    self.current_process.kill()
+                    self.current_process.wait()
+                    self.current_process = None
+                raise
+                
+        except Exception as e:
+            # Clean up process reference on any error
+            if self.current_process:
+                try:
+                    self.current_process.kill()
+                    self.current_process.wait()
+                except:
+                    pass
+                self.current_process = None
+            raise

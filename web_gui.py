@@ -153,6 +153,41 @@ class WebGUI:
                     'error': str(e)
                 }), 500
         
+        @self.app.route('/api/cancel', methods=['POST'])
+        def api_cancel():
+            """Cancel current ripping operation"""
+            try:
+                # Check if there's an active rip to cancel
+                status = self.cd_ripper.get_status()
+                
+                if status['status'] == 'idle':
+                    return jsonify({
+                        'success': False,
+                        'error': 'No active rip operation to cancel'
+                    }), 400
+                
+                # Attempt to cancel the rip
+                success = self.cd_ripper.cancel_rip()
+                
+                if success:
+                    self.logger.info("Rip operation cancelled by user")
+                    return jsonify({
+                        'success': True,
+                        'message': 'Rip operation cancelled successfully'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Failed to cancel rip operation'
+                    }), 500
+                    
+            except Exception as e:
+                self.logger.error(f"Cancel API error: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e)
+                }), 500
+        
         @self.app.route('/health')
         def health():
             """Health check endpoint - simple text response to minimize logging"""
