@@ -283,7 +283,7 @@ class TOCAnalyzer:
             # Check if there's audio before track 1
             result = subprocess.run([
                 'cdparanoia', '-d', self.device, 
-                '--query', '--verbose'
+                '-Q', '-v'  # Query mode with verbose output
             ], capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
