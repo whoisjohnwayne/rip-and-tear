@@ -23,6 +23,26 @@ class TrackInfo:
     track_type: str = "audio"
     isrc: Optional[str] = None
     cd_text: Optional[str] = None
+    
+    @property
+    def end_sector(self) -> int:
+        """Calculate end sector from start + length"""
+        return self.start_sector + self.length_sectors
+    
+    @property
+    def length_seconds(self) -> float:
+        """Calculate length in seconds (75 sectors per second)"""
+        return self.length_sectors / 75.0
+    
+    @property 
+    def pre_gap(self) -> int:
+        """Alias for pregap_sectors for compatibility"""
+        return self.pregap_sectors
+    
+    @property
+    def post_gap(self) -> int:
+        """Alias for postgap_sectors for compatibility"""
+        return self.postgap_sectors
 
 @dataclass
 class DiscInfo:
@@ -85,7 +105,7 @@ class TOCAnalyzer:
             # Get detailed track information with gaps
             detailed_tracks = self._analyze_track_gaps(basic_toc)
             if not detailed_tracks:
-                self.logger.error("Failed to analyze tracks - CD may be damaged or blank")
+                self.logger.error("Failed to analyze track structure")
                 return None
             
             # Detect HTOA (Hidden Track One Audio)
@@ -101,8 +121,8 @@ class TOCAnalyzer:
             disc_id = self._calculate_precise_disc_id(detailed_tracks)
             
             disc_info = DiscInfo(
-                total_sectors=basic_toc.get('total_sectors', 0),
-                leadout_sector=basic_toc.get('leadout_sector', 0),
+                total_sectors=basic_toc.get('total_sectors', sum(t.length_sectors for t in detailed_tracks)),
+                leadout_sector=basic_toc.get('leadout_sector', sum(t.length_sectors for t in detailed_tracks)),
                 first_track=basic_toc.get('first_track', 1),
                 last_track=basic_toc.get('last_track', len(detailed_tracks)),
                 tracks=detailed_tracks,
@@ -134,17 +154,37 @@ class TOCAnalyzer:
     
     def _get_toc_cdparanoia(self) -> Optional[Dict[str, Any]]:
         """Get TOC using cdparanoia"""
-        result = subprocess.run(
-            ['cdparanoia', '-Q', '-d', self.device],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        try:
+            result = subprocess.run(
+                ['cdparanoia', '-Q', '-d', self.device],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                self.logger.error(f"cdparanoia failed with return code {result.returncode}")
+                if result.stderr:
+                    self.logger.error(f"cdparanoia stderr: {result.stderr}")
+                return None
+            
+            # Log the ACTUAL output so we can see what we're trying to parse
+            self.logger.info("=== RAW CDPARANOIA OUTPUT ===")
+            self.logger.info(f"STDOUT:\n{result.stdout}")
+            self.logger.info(f"STDERR:\n{result.stderr}")
+            self.logger.info("=== END RAW OUTPUT ===")
+            
+            # cdparanoia outputs to STDERR, not STDOUT
+            output_to_parse = result.stderr if result.stderr.strip() else result.stdout
+            
+            return self._parse_cdparanoia_output(output_to_parse)
         
-        if result.returncode != 0:
+        except subprocess.TimeoutExpired:
+            self.logger.error("cdparanoia timed out")
             return None
-        
-        return self._parse_cdparanoia_output(result.stderr)
+        except Exception as e:
+            self.logger.error(f"cdparanoia execution failed: {e}")
+            return None
     
     def _get_toc_cdrdao(self) -> Optional[Dict[str, Any]]:
         """Get TOC using cdrdao for enhanced gap detection"""
@@ -179,11 +219,8 @@ class TOCAnalyzer:
         
         # Always start with basic tracks as foundation
         tracks = self._create_basic_tracks(basic_toc)
-        if not tracks:
-            self.logger.error("Failed to create basic tracks - CD may be unreadable")
-            return []
         
-        self.logger.info(f"Created {len(tracks)} basic tracks")
+        self.logger.info(f"Created {len(tracks)} basic tracks from TOC data")
         
         # Try to enhance with gap information if tools are available
         try:
@@ -388,110 +425,93 @@ class TOCAnalyzer:
         return tracks
 
     def _parse_cdparanoia_output(self, output: str) -> Dict[str, Any]:
-        """Parse cdparanoia -Q output with robust pattern matching"""
+        """Parse cdparanoia -Q output based on actual cdparanoia format"""
         tracks = []
         lines = output.strip().split('\n')
         
         total_sectors = 0
         leadout_sector = 0
         
-        self.logger.debug(f"Parsing cdparanoia output: {len(lines)} lines")
+        self.logger.info(f"Parsing cdparanoia output: {len(lines)} lines")
         
-        for line in lines:
+        for line_num, line in enumerate(lines):
             line = line.strip()
-            self.logger.debug(f"Processing line: {line}")
+            self.logger.debug(f"Line {line_num}: '{line}'")
             
-            # Try multiple patterns for track lines
-            track_patterns = [
-                # Pattern 1: "  1.    4:17.32 (19282 sectors)    0:02.00 -> 4:19.32"
-                r'^\s*(\d+)\.\s+(\d+):(\d+)\.(\d+)\s+\((\d+)\s+sectors\)',
-                # Pattern 2: "track 01.  audio    00:32.17    760 [00:02.17]"  
-                r'^track\s+(\d+)\.\s+audio\s+(\d+):(\d+)\.(\d+)\s+(\d+)',
-                # Pattern 3: More flexible track line
-                r'^\s*(\d+)[\.:]?\s+.*?(\d+):(\d+)[\.\:](\d+).*?(\d+)\s+sectors'
-            ]
+            # cdparanoia -Q output format is typically:
+            # "        1.  3:42.15   16757 [16:22.67]"
+            # Track number, duration, sectors, [cumulative time]
+            track_pattern = r'^\s*(\d+)\.\s+(\d+):(\d+)\.(\d+)\s+(\d+)\s+\[.*\]'
+            track_match = re.match(track_pattern, line)
             
-            track_found = False
-            for pattern in track_patterns:
-                track_match = re.search(pattern, line, re.IGNORECASE)
-                if track_match:
-                    try:
-                        track_num = int(track_match.group(1))
-                        minutes = int(track_match.group(2))
-                        seconds = int(track_match.group(3))
-                        frames = int(track_match.group(4))
-                        sectors = int(track_match.group(5))
-                        
-                        duration = f"{minutes}:{seconds:02d}.{frames:02d}"
-                        
-                        tracks.append({
-                            'number': track_num,
-                            'duration': duration,
-                            'sectors': sectors,
-                            'type': 'audio'
-                        })
-                        total_sectors += sectors
-                        self.logger.debug(f"Parsed track {track_num}: {duration} ({sectors} sectors)")
-                        track_found = True
-                        break
-                    except (ValueError, IndexError) as e:
-                        self.logger.warning(f"Failed to parse track line '{line}' with pattern '{pattern}': {e}")
+            if track_match:
+                try:
+                    track_num = int(track_match.group(1))
+                    minutes = int(track_match.group(2))
+                    seconds = int(track_match.group(3))
+                    frames = int(track_match.group(4))
+                    sectors = int(track_match.group(5))
+                    
+                    # Validate track number
+                    if track_num <= 0 or track_num > 99:
                         continue
-            
-            if not track_found and ('total' in line.lower() or 'TOTAL' in line):
-                # Try to extract total information
-                total_patterns = [
-                    r'TOTAL\s+(\d+):(\d+)\.(\d+)\s+\((\d+)\s+sectors\)',
-                    r'total.*?(\d+):(\d+)[\.\:](\d+).*?(\d+)\s+sectors',
-                    r'(\d+):(\d+)[\.\:](\d+).*?total.*?(\d+)'
-                ]
-                
-                for pattern in total_patterns:
-                    total_match = re.search(pattern, line, re.IGNORECASE)
-                    if total_match:
-                        try:
-                            minutes = int(total_match.group(1))
-                            seconds = int(total_match.group(2))
-                            frames = int(total_match.group(3))
-                            leadout_sector = int(total_match.group(4))
-                            self.logger.debug(f"Found total: {minutes}:{seconds:02d}.{frames:02d} ({leadout_sector} sectors)")
-                            break
-                        except (ValueError, IndexError):
-                            continue
-        
-        self.logger.info(f"cdparanoia parsing found {len(tracks)} tracks")
-        
-        if not tracks:
-            self.logger.error("No tracks found in cdparanoia output")
-            self.logger.error(f"Raw cdparanoia output:\n{output}")
-            
-            # Try a last-ditch effort to count tracks by looking for any numeric patterns
-            track_count = 0
-            for line in lines:
-                if re.search(r'^\s*\d+[\.\s]', line):
-                    track_count += 1
-            
-            if track_count > 0:
-                self.logger.warning(f"Found {track_count} potential tracks, creating basic tracks")
-                # Create basic tracks with estimated timing
-                estimated_tracks = []
-                for i in range(1, min(track_count + 1, 20)):  # Max 20 tracks
-                    estimated_tracks.append({
-                        'number': i,
-                        'duration': '3:00.00',
-                        'sectors': 13500,  # 3 minutes * 75 sectors/second
+                    
+                    duration = f"{minutes}:{seconds:02d}.{frames:02d}"
+                    
+                    tracks.append({
+                        'number': track_num,
+                        'duration': duration,
+                        'sectors': sectors,
                         'type': 'audio'
                     })
-                
-                return {
-                    'tracks': estimated_tracks,
-                    'total_sectors': len(estimated_tracks) * 13500,
-                    'leadout_sector': len(estimated_tracks) * 13500,
-                    'first_track': 1,
-                    'last_track': len(estimated_tracks)
-                }
-            
-            # Return empty but valid structure
+                    total_sectors += sectors
+                    self.logger.info(f"✓ Found track {track_num}: {duration} ({sectors} sectors)")
+                    
+                except (ValueError, IndexError) as e:
+                    self.logger.warning(f"Could not parse track from line '{line}': {e}")
+                    
+            # Look for total length line: "Total length: 45:23.67   203742 sectors"
+            elif line.lower().startswith('total length:'):
+                total_pattern = r'total length:\s+\d+:\d+\.\d+\s+(\d+)\s+sectors'
+                total_match = re.search(total_pattern, line, re.IGNORECASE)
+                if total_match:
+                    leadout_sector = int(total_match.group(1))
+                    self.logger.info(f"✓ Found total: {leadout_sector} sectors")
+                    
+            # Alternative format check - some versions might output differently
+            # Look for any line with track-like format as fallback
+            elif not tracks:  # Only if we haven't found tracks yet
+                # Fallback pattern for different cdparanoia versions
+                fallback_pattern = r'(\d+)[\.\s]+.*?(\d+)\s+sectors'
+                fallback_match = re.search(fallback_pattern, line, re.IGNORECASE)
+                if fallback_match:
+                    try:
+                        track_num = int(fallback_match.group(1))
+                        sectors = int(fallback_match.group(2))
+                        
+                        if 1 <= track_num <= 99 and sectors > 1000:  # Reasonable track
+                            duration = f"{sectors//75//60}:{(sectors//75)%60:02d}.{sectors%75:02d}"
+                            tracks.append({
+                                'number': track_num,
+                                'duration': duration,
+                                'sectors': sectors,
+                                'type': 'audio'
+                            })
+                            self.logger.info(f"✓ Found track {track_num} (fallback): {duration} ({sectors} sectors)")
+                    except (ValueError, IndexError):
+                        pass
+        
+        # Sort tracks by track number
+        tracks.sort(key=lambda t: t['number'])
+        
+        self.logger.info(f"✓ Successfully parsed {len(tracks)} tracks from cdparanoia")
+        
+        if not tracks:
+            self.logger.error("❌ No tracks found in cdparanoia output")
+            # Log the raw output for debugging
+            self.logger.error("Raw output was:")
+            for i, line in enumerate(lines[:10]):  # First 10 lines
+                self.logger.error(f"  {i}: '{line}'")
             return {
                 'tracks': [],
                 'total_sectors': 0,
@@ -503,9 +523,9 @@ class TOCAnalyzer:
         return {
             'tracks': tracks,
             'total_sectors': total_sectors if total_sectors > 0 else leadout_sector,
-            'leadout_sector': leadout_sector,
-            'first_track': 1,
-            'last_track': len(tracks)
+            'leadout_sector': leadout_sector if leadout_sector > 0 else total_sectors,
+            'first_track': tracks[0]['number'],
+            'last_track': tracks[-1]['number']
         }
     
     def _parse_cdrdao_output(self, output: str) -> Optional[Dict[str, Any]]:
@@ -519,38 +539,18 @@ class TOCAnalyzer:
         return None
     
     def _create_basic_tracks(self, basic_toc: Dict[str, Any]) -> List[TrackInfo]:
-        """Create basic track info when detailed analysis fails"""
+        """Create basic track info from parsed TOC data"""
         tracks = []
         
         if not basic_toc:
             self.logger.error("No basic_toc data available for creating tracks")
-            return self._create_emergency_tracks()
+            return []
             
-        # Try to extract track info from different possible formats
+        # Try to extract track info from TOC data
         track_data = basic_toc.get('tracks', [])
         if not track_data:
-            # Fallback: create tracks based on first/last track numbers
-            first_track = basic_toc.get('first_track', 1)
-            last_track = basic_toc.get('last_track', 0)
-            
-            if last_track >= first_track and last_track > 0:
-                self.logger.info(f"Creating {last_track - first_track + 1} basic tracks")
-                total_sectors = basic_toc.get('total_sectors', 0)
-                sectors_per_track = total_sectors // (last_track - first_track + 1) if last_track > first_track else total_sectors
-                
-                for i in range(first_track, last_track + 1):
-                    track = TrackInfo(
-                        number=i,
-                        start_sector=(i - first_track) * sectors_per_track,
-                        length_sectors=sectors_per_track,
-                        track_type='audio'
-                    )
-                    tracks.append(track)
-            else:
-                self.logger.error(f"Invalid track range: {first_track}-{last_track}")
-                self.logger.warning("Using emergency track creation as last resort")
-                return self._create_emergency_tracks()
-            return tracks
+            self.logger.error("No track data found in TOC")
+            return []
             
         current_sector = 0
         
@@ -568,30 +568,12 @@ class TOCAnalyzer:
                 )
                 tracks.append(track)
                 current_sector += track.length_sectors
+                
         except Exception as e:
             self.logger.error(f"Error creating basic tracks: {e}")
             self.logger.error(f"basic_toc content: {basic_toc}")
-            self.logger.warning("Using emergency track creation as last resort")
-            return self._create_emergency_tracks()
+            return []
         
-        return tracks
-
-    def _create_emergency_tracks(self) -> List[TrackInfo]:
-        """Emergency fallback: create reasonable default tracks when all else fails"""
-        self.logger.warning("Creating emergency fallback tracks - CD analysis failed")
-        tracks = []
-        
-        # Create 10 tracks of ~3 minutes each (reasonable for most CDs)
-        for i in range(1, 11):
-            track = TrackInfo(
-                number=i,
-                start_sector=(i-1) * 13500,  # ~3 minutes per track at 75 sectors/second
-                length_sectors=13500,  # 180 seconds * 75 sectors/second
-                track_type='audio'
-            )
-            tracks.append(track)
-            
-        self.logger.info(f"Created {len(tracks)} emergency fallback tracks")
         return tracks
     
     def _log_disc_analysis(self, disc_info: DiscInfo):
