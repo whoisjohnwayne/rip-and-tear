@@ -447,7 +447,9 @@ class TOCAnalyzer:
             # Real cdparanoia -Q output format:
             # " 1. 19497 [04:19.72] 0 [00:00.00] OK no 2"
             # Track number, sectors, [duration], start_sector, [start_time], status, pre, ch
-            track_pattern = r'^\s*(\d+)\.\s+(\d+)\s+\[(\d+):(\d+)\.(\d+)\]\s+(\d+)\s+\[.*\]\s+\w+.*'
+            
+            # More restrictive pattern to avoid false matches
+            track_pattern = r'^\s*(\d{1,2})\.\s+(\d+)\s+\[(\d+):(\d+)\.(\d+)\]\s+(\d+)\s+\[(\d+):(\d+)\.(\d+)\]\s+(OK|ok)\s+'
             track_match = re.match(track_pattern, line)
             
             if track_match:
@@ -459,15 +461,21 @@ class TOCAnalyzer:
                     frames = int(track_match.group(5))
                     start_sector = int(track_match.group(6))
                     
-                    # Validate track number
+                    # More restrictive validation
                     if track_num <= 0 or track_num > 99:
                         self.logger.debug(f"Skipping invalid track number: {track_num}")
                         continue
                     
-                    # Skip tracks that are too short (likely data or index)
-                    if sectors < 300:  # Less than 4 seconds (75 sectors/second)
-                        self.logger.info(f"Skipping very short track {track_num}: {sectors} sectors")
+                    # Only accept reasonable audio track lengths (5 seconds to 80 minutes)
+                    min_sectors = 375    # 5 seconds
+                    max_sectors = 360000 # 80 minutes
+                    if sectors < min_sectors or sectors > max_sectors:
+                        self.logger.info(f"Skipping track {track_num} with unusual length: {sectors} sectors ({sectors/75:.1f} seconds)")
                         continue
+                    
+                    # Ensure track numbers are sequential (no big gaps)
+                    if tracks and track_num > tracks[-1]['number'] + 1:
+                        self.logger.warning(f"Non-sequential track number {track_num} after track {tracks[-1]['number']}")
                     
                     duration = f"{minutes}:{seconds:02d}.{frames:02d}"
                     
@@ -479,10 +487,14 @@ class TOCAnalyzer:
                         'type': 'audio'
                     })
                     total_sectors += sectors
-                    self.logger.info(f"✓ Found track {track_num}: {duration} ({sectors} sectors, start: {start_sector})")
+                    self.logger.info(f"✓ Accepted track {track_num}: {duration} ({sectors} sectors, {sectors/75:.1f}s, start: {start_sector})")
                     
                 except (ValueError, IndexError) as e:
                     self.logger.warning(f"Could not parse track from line '{line}': {e}")
+            
+            # Log lines that look like tracks but don't match our pattern
+            elif re.search(r'^\s*\d+\.\s+\d+\s+\[', line):
+                self.logger.info(f"❌ Rejected potential track line: '{line}'")
                     
             # Look for any total information if present
             elif 'total' in line.lower() and 'sectors' in line.lower():
@@ -500,7 +512,11 @@ class TOCAnalyzer:
             last_track = tracks[-1]
             leadout_sector = last_track['start_sector'] + last_track['sectors']
         
-        self.logger.info(f"✓ Successfully parsed {len(tracks)} tracks from cdparanoia")
+        self.logger.info(f"🎵 Track parsing summary: {len(tracks)} valid audio tracks found")
+        if tracks:
+            self.logger.info(f"   📀 Track range: {tracks[0]['number']} to {tracks[-1]['number']}")
+            total_duration = sum(t['sectors'] for t in tracks) / 75 / 60  # minutes
+            self.logger.info(f"   ⏱️  Total duration: {total_duration:.1f} minutes")
         
         if not tracks:
             self.logger.error("❌ No tracks found in cdparanoia output")
