@@ -35,8 +35,8 @@ class MetadataFetcher:
             mb.set_hostname(config['metadata']['musicbrainz_server'])
     
     def get_metadata(self, toc_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Get metadata for the CD"""
-        if not self.config['metadata']['use_musicbrainz']:
+        """Get metadata for the CD with robust error handling"""
+        if not self.config['metadata']['use_musicbrainz'] or not MUSICBRAINZ_AVAILABLE:
             return self._get_default_metadata(toc_info)
         
         try:
@@ -48,15 +48,17 @@ class MetadataFetcher:
                     return release_info
             
             # Fallback: try fuzzy search if we have enough tracks
-            if len(toc_info['tracks']) >= 3:
-                return self._fuzzy_search(toc_info)
-            
-            self.logger.warning("Could not find metadata, using defaults")
-            return self._get_default_metadata(toc_info)
+            tracks = toc_info.get('tracks', [])
+            if len(tracks) >= 3:  # Only try if we have at least 3 tracks
+                fuzzy_result = self._fuzzy_search(toc_info)
+                if fuzzy_result:
+                    return fuzzy_result
             
         except Exception as e:
-            self.logger.error(f"Metadata fetching failed: {e}")
-            return self._get_default_metadata(toc_info)
+            self.logger.error(f"MusicBrainz metadata fetch failed: {e}")
+        
+        # Always fallback to default metadata
+        return self._get_default_metadata(toc_info)
     
     def _calculate_disc_id(self, toc_info: Dict[str, Any]) -> Optional[str]:
         """Calculate MusicBrainz disc ID"""
@@ -94,9 +96,13 @@ class MetadataFetcher:
             return None
     
     def _fuzzy_search(self, toc_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Perform fuzzy search based on track count and duration"""
+        """Perform fuzzy search based on track count and duration with safe access"""
         try:
-            tracks = toc_info['tracks']
+            tracks = toc_info.get('tracks', [])
+            if not tracks:
+                self.logger.warning("No tracks in TOC info for fuzzy search")
+                return None
+                
             track_count = len(tracks)
             
             # Search for releases with similar track count
@@ -108,11 +114,15 @@ class MetadataFetcher:
                 format='json'
             )
             
-            if result['release-list']:
+            # Safe access to search results
+            release_list = result.get('release-list', []) if isinstance(result, dict) else []
+            if release_list and len(release_list) > 0:
                 # Take the first match for now
-                release = result['release-list'][0]
-                return self._parse_musicbrainz_release(release, track_count)
+                release = release_list[0]
+                if isinstance(release, dict):
+                    return self._parse_musicbrainz_release(release, track_count)
             
+            self.logger.info("No matching releases found in fuzzy search")
             return None
             
         except Exception as e:
@@ -120,18 +130,22 @@ class MetadataFetcher:
             return None
     
     def _parse_musicbrainz_release(self, release: Dict, expected_tracks: int) -> Dict[str, Any]:
-        """Parse MusicBrainz release data"""
+        """Parse MusicBrainz release data with robust error handling"""
         try:
             # Get detailed release information
-            release_id = release['id']
+            release_id = release.get('id')
+            if not release_id:
+                self.logger.warning("No release ID found in MusicBrainz data")
+                return None
+                
             detailed_release = mb.get_release_by_id(
                 release_id,
                 includes=['recordings', 'artist-credits']
             )
             
-            release_data = detailed_release['release']
+            release_data = detailed_release.get('release', {})
             
-            # Extract basic album info
+            # Extract basic album info with safe attribute access
             metadata = {
                 'artist': self._get_artist_name(release_data.get('artist-credit', [])),
                 'album': release_data.get('title', 'Unknown Album'),
@@ -140,18 +154,26 @@ class MetadataFetcher:
                 'tracks': []
             }
             
-            # Extract track information
-            if 'medium-list' in release_data:
-                for medium in release_data['medium-list']:
-                    if 'track-list' in medium:
-                        for track in medium['track-list']:
-                            track_info = {
-                                'title': track.get('title', 'Unknown Track'),
-                                'artist': self._get_artist_name(track.get('artist-credit', [])),
-                                'length': track.get('length'),
-                                'position': track.get('position', 0)
-                            }
-                            metadata['tracks'].append(track_info)
+            # Extract track information with safe access
+            medium_list = release_data.get('medium-list', [])
+            if medium_list:
+                for medium in medium_list:
+                    track_list = medium.get('track-list', [])
+                    for track in track_list:
+                        if not isinstance(track, dict):
+                            continue
+                            
+                        # Safe track recording access
+                        recording = track.get('recording', {})
+                        track_title = track.get('title') or recording.get('title', 'Unknown Track')
+                        
+                        track_info = {
+                            'title': track_title,
+                            'artist': self._get_artist_name(track.get('artist-credit', []) or recording.get('artist-credit', [])),
+                            'length': track.get('length') or recording.get('length'),
+                            'position': track.get('position', len(metadata['tracks']) + 1)
+                        }
+                        metadata['tracks'].append(track_info)
             
             # Pad with default tracks if we don't have enough
             while len(metadata['tracks']) < expected_tracks:
@@ -162,41 +184,60 @@ class MetadataFetcher:
                     'position': track_num
                 })
             
-            self.logger.info(f"Found metadata: {metadata['artist']} - {metadata['album']}")
+            self.logger.info(f"Found metadata: {metadata['artist']} - {metadata['album']} ({len(metadata['tracks'])} tracks)")
             return metadata
             
         except Exception as e:
             self.logger.error(f"Failed to parse MusicBrainz release: {e}")
+            self.logger.debug(f"Release data structure: {release}")
             return None
     
     def _get_artist_name(self, artist_credit: List) -> str:
-        """Extract artist name from artist credit"""
-        if not artist_credit:
+        """Extract artist name from artist credit with safe access"""
+        try:
+            if not artist_credit:
+                return 'Unknown Artist'
+            
+            if isinstance(artist_credit, list) and len(artist_credit) > 0:
+                first_credit = artist_credit[0]
+                if isinstance(first_credit, dict):
+                    # Try artist.name first
+                    if 'artist' in first_credit:
+                        artist = first_credit['artist']
+                        if isinstance(artist, dict) and 'name' in artist:
+                            return artist['name']
+                    
+                    # Try direct name field
+                    if 'name' in first_credit:
+                        return first_credit['name']
+            
             return 'Unknown Artist'
-        
-        if isinstance(artist_credit, list) and len(artist_credit) > 0:
-            if 'artist' in artist_credit[0]:
-                return artist_credit[0]['artist'].get('name', 'Unknown Artist')
-            elif 'name' in artist_credit[0]:
-                return artist_credit[0]['name']
-        
-        return 'Unknown Artist'
+            
+        except Exception as e:
+            self.logger.warning(f"Error extracting artist name: {e}")
+            return 'Unknown Artist'
     
     def _get_release_date(self, release_data: Dict) -> str:
-        """Extract release date"""
-        date = release_data.get('date', '')
-        if date:
-            # Extract year from full date
-            return date.split('-')[0]
-        
-        # Try other date fields
-        for date_field in ['first-release-date', 'release-date']:
-            if date_field in release_data:
-                date = release_data[date_field]
-                if date:
-                    return date.split('-')[0]
-        
-        return ''
+        """Extract release date with safe access"""
+        try:
+            # Try main date field first
+            date = release_data.get('date', '')
+            if date and isinstance(date, str):
+                # Extract year from full date
+                return date.split('-')[0]
+            
+            # Try other date fields
+            for date_field in ['first-release-date', 'release-date']:
+                if date_field in release_data:
+                    date = release_data[date_field]
+                    if date and isinstance(date, str):
+                        return date.split('-')[0]
+            
+            return ''
+            
+        except Exception as e:
+            self.logger.warning(f"Error extracting release date: {e}")
+            return ''
     
     def _get_default_metadata(self, toc_info: Dict[str, Any]) -> Dict[str, Any]:
         """Get default metadata when MusicBrainz lookup fails"""
