@@ -680,7 +680,28 @@ class CDRipper:
                     self.progress = int(i / len(tracks) * 100)
                     continue
 
-                track_file = output_dir / f"{i:02d}.wav"
+                # Use full metadata-based filename for output WAV, matching burst mode
+                fallback_title = f'Track {i:02d}'
+                track_meta = None
+                track_title = None
+                if metadata and metadata.get('tracks') and i <= len(metadata['tracks']):
+                    track_meta = metadata['tracks'][i-1]
+                    if not track_meta:
+                        self.logger.warning(f"No metadata for track {i}, using fallback title '{fallback_title}'")
+                        track_title = fallback_title
+                    else:
+                        title = track_meta.get('title')
+                        if not title or not str(title).strip():
+                            self.logger.warning(f"Missing or empty title for track {i}, using fallback title '{fallback_title}'")
+                            track_title = fallback_title
+                        else:
+                            track_title = str(title)
+                else:
+                    self.logger.warning(f"No metadata entry for track {i}, using fallback title '{fallback_title}'")
+                    track_title = fallback_title
+
+                sanitized_title = self._sanitize_filename(track_title)
+                track_file = output_dir / f"{i:02d} - {sanitized_title}.wav"
 
                 # Use cd-paranoia in paranoia mode
                 cmd = [
