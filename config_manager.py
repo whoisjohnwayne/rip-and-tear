@@ -63,7 +63,7 @@ class ConfigManager:
             'output': {
                 'directory': os.getenv('OUTPUT_DIR', '/output'),
                 'format': 'flac',
-                'compression_level': 8,
+                'compression_level': 5,  # Better speed/size balance than level 8
                 'create_cue': True,
                 'create_log': True,
             },
@@ -74,6 +74,9 @@ class ConfigManager:
                 'accuraterip_require_both': False,
                 'paranoia_mode': 'full',  # full, overlap, neverskip
                 'max_retries': 10,
+                'last_track_retries': 1,  # Very aggressive - just try once and move on
+                'last_track_paranoia': 'minimal',  # Bypass lead-out verification by default
+                'leadout_detection': 'disabled',  # Completely bypass lead-out logic by default
             },
             'metadata': {
                 'use_musicbrainz': True,
@@ -134,6 +137,9 @@ class ConfigManager:
             'ACCURATERIP_REQUIRE_BOTH': ('ripping', 'accuraterip_require_both', self._str_to_bool),
             'PARANOIA_MODE': ('ripping', 'paranoia_mode'),
             'MAX_RETRIES': ('ripping', 'max_retries', int),
+            'LAST_TRACK_RETRIES': ('ripping', 'last_track_retries', int),
+            'LAST_TRACK_PARANOIA': ('ripping', 'last_track_paranoia'),
+            'LEADOUT_DETECTION': ('ripping', 'leadout_detection'),
             'SECTOR_RETRIES': ('ripping', 'sector_retries', int),
             'ENABLE_GAP_DETECTION': ('ripping', 'enable_gap_detection', self._str_to_bool),
             'READ_LEAD_IN': ('ripping', 'read_lead_in', self._str_to_bool),

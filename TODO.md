@@ -86,6 +86,7 @@
 ### 7. **Real-time Progress Feedback**
 - **Current**: Basic status updates
 - **Improvement**: Track-by-track progress, time estimates, detailed status
+- **Enhancement Request**: More granular progress for each track (per-track completion percentage, reading/encoding phases, error states)
 
 ### 8. **Better Error Display**
 - **Current**: Errors shown in logs/console
@@ -123,6 +124,13 @@
 ### 15. **Batch Processing**
 - **Potential**: Queue multiple discs for processing
 - **Priority**: Medium
+
+### 16. **User Experience Improvements**
+- **Suppress MusicBrainz logging**: Filter out ws2 INFO statements for cleaner logs
+- **Metal theme**: UI styling to match DOOM video game aesthetic (name origin)
+- **Compression level default**: Change from level 8 to level 5 for better speed/size balance
+- **Format options**: Keep WAV files, skip FLAC encoding, support other formats (MP3, OGG, etc.)
+- **Priority**: Medium (UX polish)
 
 ## 📊 **Recent Progress**
 
