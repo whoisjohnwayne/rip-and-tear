@@ -34,6 +34,8 @@ services:
       # Ripping Configuration  
       - TRY_BURST_FIRST=true        # Try burst mode first
       - USE_ACCURATERIP=true        # Verify against AccurateRip
+      - ACCURATERIP_PREFER_V2=true  # Prefer AccurateRip v2 (more accurate)
+      - ACCURATERIP_REQUIRE_BOTH=false  # Don't require both v1+v2 to match
       - PARANOIA_MODE=full          # Paranoia mode: full, overlap, neverskip
       - MAX_RETRIES=10              # Maximum retry attempts
       - SECTOR_RETRIES=20           # Retries per problematic sector

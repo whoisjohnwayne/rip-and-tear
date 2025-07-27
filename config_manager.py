@@ -70,6 +70,8 @@ class ConfigManager:
             'ripping': {
                 'try_burst_first': True,
                 'use_accuraterip': True,
+                'accuraterip_prefer_v2': True,
+                'accuraterip_require_both': False,
                 'paranoia_mode': 'full',  # full, overlap, neverskip
                 'max_retries': 10,
             },
@@ -128,6 +130,8 @@ class ConfigManager:
             # Ripping settings
             'TRY_BURST_FIRST': ('ripping', 'try_burst_first', self._str_to_bool),
             'USE_ACCURATERIP': ('ripping', 'use_accuraterip', self._str_to_bool),
+            'ACCURATERIP_PREFER_V2': ('ripping', 'accuraterip_prefer_v2', self._str_to_bool),
+            'ACCURATERIP_REQUIRE_BOTH': ('ripping', 'accuraterip_require_both', self._str_to_bool),
             'PARANOIA_MODE': ('ripping', 'paranoia_mode'),
             'MAX_RETRIES': ('ripping', 'max_retries', int),
             'SECTOR_RETRIES': ('ripping', 'sector_retries', int),

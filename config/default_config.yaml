@@ -20,6 +20,8 @@ output:
 ripping:
   try_burst_first: true  # Try burst mode first, fallback to paranoia if verification fails
   use_accuraterip: true  # Verify against AccurateRip database
+  accuraterip_prefer_v2: true  # Prefer AccurateRip v2 over v1 (more accurate)
+  accuraterip_require_both: false  # Require both v1 and v2 to match (strictest)
   paranoia_mode: "full"  # Paranoia mode: "full", "overlap", "neverskip"
   max_retries: 10
   sector_retries: 20  # Retries per sector for problematic areas

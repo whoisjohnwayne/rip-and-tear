@@ -371,7 +371,7 @@ class CDRipper:
             return False
     
     def _verify_accuraterip_per_track(self, output_dir: Path, disc_info) -> List[int]:
-        """Verify each track against AccurateRip and return list of failed track numbers"""
+        """Verify each track against AccurateRip v1/v2 and return list of failed track numbers"""
         try:
             failed_tracks = []
             wav_files = sorted(list(output_dir.glob("*.wav")))
@@ -380,33 +380,92 @@ class CDRipper:
                 self.logger.warning("No WAV files found for AccurateRip verification")
                 return list(range(1, len(disc_info.tracks) + 1))  # All tracks failed
             
-            # Calculate checksums for all tracks
+            # Calculate checksums for all tracks (both v1 and v2)
             track_checksums = {}
             for wav_file in wav_files:
                 # Extract track number from filename (e.g., "01.wav" -> 1)
                 track_match = re.search(r'(\d+)\.wav$', wav_file.name)
                 if track_match:
                     track_num = int(track_match.group(1))
-                    checksum = self.accuraterip_checker._calculate_accuraterip_checksum(wav_file)
-                    if checksum is not None:
-                        track_checksums[track_num] = checksum
-                    else:
+                    
+                    # Calculate both v1 and v2 checksums
+                    try:
+                        with open(wav_file, 'rb') as f:
+                            header = f.read(44)
+                            if header.startswith(b'RIFF') and b'WAVE' in header:
+                                audio_data = f.read()
+                                v1_checksum = self.accuraterip_checker._calculate_accuraterip_v1_checksum(audio_data)
+                                v2_checksum = self.accuraterip_checker._calculate_accuraterip_v2_checksum(audio_data)
+                                
+                                track_checksums[track_num] = {
+                                    'v1': v1_checksum,
+                                    'v2': v2_checksum
+                                }
+                                
+                                self.logger.debug(f"Track {track_num} checksums: v1={v1_checksum:08X}, v2={v2_checksum:08X}")
+                            else:
+                                self.logger.error(f"Invalid WAV file: {wav_file}")
+                                failed_tracks.append(track_num)
+                    
+                    except Exception as e:
+                        self.logger.error(f"Failed to calculate checksums for track {track_num}: {e}")
                         failed_tracks.append(track_num)
-                        self.logger.error(f"Failed to calculate checksum for track {track_num}")
             
-            # Verify against AccurateRip database
+            # Verify against AccurateRip database with both versions
             if track_checksums:
-                verified_tracks = self.accuraterip_checker.verify_track_checksums(
+                verification_results = self.accuraterip_checker.verify_track_checksums_with_versions(
                     disc_info, track_checksums
                 )
                 
-                # Determine which tracks failed verification
+                # Check which tracks failed based on configuration preferences
                 for track_num in track_checksums.keys():
-                    if track_num not in verified_tracks:
-                        failed_tracks.append(track_num)
-                        self.logger.warning(f"Track {track_num} failed AccurateRip verification")
+                    if track_num in verification_results:
+                        v1_match = verification_results[track_num].get('v1', False)
+                        v2_match = verification_results[track_num].get('v2', False)
+                        
+                        # Apply configuration preferences for AccurateRip verification
+                        prefer_v2 = self.config['ripping'].get('accuraterip_prefer_v2', True)
+                        require_both = self.config['ripping'].get('accuraterip_require_both', False)
+                        
+                        track_passed = False
+                        if require_both:
+                            # Strictest mode: both v1 and v2 must match
+                            track_passed = v1_match and v2_match
+                            match_type = "v1+v2" if track_passed else "neither"
+                        elif prefer_v2:
+                            # Prefer v2, but accept v1 if v2 not available
+                            track_passed = v2_match or v1_match
+                            if v2_match and v1_match:
+                                match_type = "v1+v2"
+                            elif v2_match:
+                                match_type = "v2"
+                            elif v1_match:
+                                match_type = "v1"
+                            else:
+                                match_type = "none"
+                        else:
+                            # Accept either v1 or v2
+                            track_passed = v1_match or v2_match
+                            if v1_match and v2_match:
+                                match_type = "v1+v2"
+                            elif v1_match:
+                                match_type = "v1"
+                            elif v2_match:
+                                match_type = "v2"
+                            else:
+                                match_type = "none"
+                        
+                        if track_passed:
+                            self.logger.info(f"Track {track_num}: AccurateRip ✅ ({match_type})")
+                        else:
+                            self.logger.warning(f"Track {track_num}: AccurateRip ❌ ({match_type})")
+                            failed_tracks.append(track_num)
                     else:
-                        self.logger.info(f"Track {track_num} verified with AccurateRip")
+                        self.logger.warning(f"Track {track_num}: AccurateRip verification failed")
+                        failed_tracks.append(track_num)
+            else:
+                self.logger.warning("No track checksums calculated for AccurateRip verification")
+                failed_tracks = list(range(1, len(disc_info.tracks) + 1))
             
             return sorted(failed_tracks)
             

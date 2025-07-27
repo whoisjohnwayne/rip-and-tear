@@ -135,6 +135,7 @@
 - UI cancel functionality with backend process termination
 - Duplicate track filtering and detection
 - Proper MusicBrainz disc ID calculation with python-discid integration
+- **CRITICAL**: Fixed MusicBrainz type-id AttributeError by filtering duplicate tracks at DiscInfo creation level
 
 ### 🟡 **In Progress**
 - Validating TOC parsing fixes (18 vs 6 track issue)

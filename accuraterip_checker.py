@@ -59,27 +59,99 @@ class AccurateRipChecker:
                 # Read audio data
                 audio_data = f.read()
                 
-                # Calculate AccurateRip checksum (simplified version)
-                # Real AccurateRip uses a specific algorithm with sample counting
-                checksum = 0
-                sample_count = len(audio_data) // 4  # 4 bytes per sample (16-bit stereo)
-                
-                for i in range(0, len(audio_data), 4):
-                    if i + 4 <= len(audio_data):
-                        # Get 32-bit sample (little-endian)
-                        sample = struct.unpack('<I', audio_data[i:i+4])[0]
-                        
-                        # AccurateRip algorithm (simplified)
-                        multiplier = i // 4 + 1
-                        checksum += (sample * multiplier) & 0xFFFFFFFF
-                
-                checksum &= 0xFFFFFFFF
-                self.logger.debug(f"Calculated checksum for {wav_file}: {checksum:08X}")
-                return checksum
+                # Calculate AccurateRip v2 checksum (default)
+                return self._calculate_accuraterip_v2_checksum(audio_data)
                 
         except Exception as e:
             self.logger.error(f"Failed to calculate checksum for {wav_file}: {e}")
             return None
+    
+    def _calculate_accuraterip_v1_checksum(self, audio_data: bytes) -> int:
+        """Calculate AccurateRip v1 checksum using the original algorithm"""
+        try:
+            checksum = 0
+            sample_count = len(audio_data) // 4  # 4 bytes per sample (16-bit stereo)
+            
+            # AccurateRip v1 algorithm
+            for i in range(0, len(audio_data), 4):
+                if i + 4 <= len(audio_data):
+                    # Get 32-bit sample (little-endian)
+                    sample = struct.unpack('<I', audio_data[i:i+4])[0]
+                    
+                    # v1 algorithm: multiply by sample position + 1
+                    multiplier = (i // 4) + 1
+                    checksum += (sample * multiplier) & 0xFFFFFFFF
+                    checksum &= 0xFFFFFFFF
+            
+            return checksum
+            
+        except Exception as e:
+            self.logger.error(f"AccurateRip v1 checksum calculation failed: {e}")
+            return 0
+    
+    def _calculate_accuraterip_v2_checksum(self, audio_data: bytes) -> int:
+        """Calculate AccurateRip v2 checksum using the enhanced algorithm"""
+        try:
+            checksum = 0
+            sample_count = len(audio_data) // 4  # 4 bytes per sample (16-bit stereo)
+            
+            # AccurateRip v2 algorithm (more robust)
+            for i in range(0, len(audio_data), 4):
+                if i + 4 <= len(audio_data):
+                    # Get 32-bit sample (little-endian)
+                    sample = struct.unpack('<I', audio_data[i:i+4])[0]
+                    
+                    # v2 algorithm: enhanced multiplier calculation
+                    sample_index = i // 4
+                    
+                    # Skip first and last 588 samples (2646 bytes each end)
+                    # This is the AccurateRip v2 "skip" to avoid read errors at track boundaries
+                    if sample_index < 588 or sample_index >= (sample_count - 588):
+                        continue
+                    
+                    # v2 uses a different multiplier scheme
+                    multiplier = sample_index - 587  # Adjust for skipped samples
+                    checksum += (sample * multiplier) & 0xFFFFFFFF
+                    checksum &= 0xFFFFFFFF
+            
+            return checksum
+            
+        except Exception as e:
+            self.logger.error(f"AccurateRip v2 checksum calculation failed: {e}")
+            return 0
+    
+    def verify_track_with_versions(self, wav_file: Path, track_number: int, disc_info) -> Dict[str, bool]:
+        """Verify a track against both AccurateRip v1 and v2"""
+        try:
+            results = {'v1': False, 'v2': False}
+            
+            # Read audio data
+            with open(wav_file, 'rb') as f:
+                header = f.read(44)
+                if not header.startswith(b'RIFF') or b'WAVE' not in header:
+                    self.logger.error(f"Invalid WAV file: {wav_file}")
+                    return results
+                
+                audio_data = f.read()
+            
+            # Calculate both v1 and v2 checksums
+            v1_checksum = self._calculate_accuraterip_v1_checksum(audio_data)
+            v2_checksum = self._calculate_accuraterip_v2_checksum(audio_data)
+            
+            self.logger.info(f"Track {track_number} checksums: v1={v1_checksum:08X}, v2={v2_checksum:08X}")
+            
+            # Get AccurateRip database entry
+            checksums = {track_number: {'v1': v1_checksum, 'v2': v2_checksum}}
+            verified_tracks = self.verify_track_checksums_with_versions(disc_info, checksums)
+            
+            if track_number in verified_tracks:
+                results.update(verified_tracks[track_number])
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Track verification failed for {wav_file}: {e}")
+            return {'v1': False, 'v2': False}
     
     def _calculate_disc_id(self, wav_files: List[Path]) -> Optional[str]:
         """Calculate a disc ID for AccurateRip lookup (simplified)"""
@@ -237,6 +309,88 @@ class AccurateRipChecker:
         except Exception as e:
             self.logger.error(f"Track checksum verification failed: {e}")
             return []
+    
+    def verify_track_checksums_with_versions(self, disc_info, track_checksums: Dict[int, Dict[str, int]]) -> Dict[int, Dict[str, bool]]:
+        """Verify track checksums against both AccurateRip v1 and v2"""
+        try:
+            results = {}
+            
+            # Calculate all three AccurateRip disc IDs
+            if not hasattr(disc_info, 'tracks') or not disc_info.tracks:
+                self.logger.warning("No track information available for AccurateRip verification")
+                return results
+            
+            # Filter duplicate tracks
+            track_numbers = [track.number for track in disc_info.tracks]
+            unique_tracks = list(set(track_numbers))
+            if len(track_numbers) != len(unique_tracks):
+                self.logger.warning(f"Duplicate track numbers detected! Raw: {track_numbers}, Unique: {unique_tracks}")
+                seen_numbers = set()
+                filtered_tracks = []
+                for track in disc_info.tracks:
+                    if track.number not in seen_numbers:
+                        seen_numbers.add(track.number)
+                        filtered_tracks.append(track)
+                tracks_to_use = filtered_tracks
+            else:
+                tracks_to_use = disc_info.tracks
+            
+            # Calculate track offsets for disc ID calculation
+            track_offsets = []
+            for track in tracks_to_use:
+                offset_sectors = track.start_sector + 150  # Add 2-second CD standard offset
+                track_offsets.append(offset_sectors)
+            
+            # Add leadout position
+            if tracks_to_use:
+                last_track = tracks_to_use[-1]
+                leadout_sectors = last_track.start_sector + last_track.length_sectors + 150
+                track_offsets.append(leadout_sectors)
+            
+            # Calculate all three disc IDs
+            disc_id1 = self._calculate_accuraterip_disc_id1(track_offsets)
+            disc_id2 = self._calculate_accuraterip_disc_id2(track_offsets)
+            disc_id3 = self._calculate_accuraterip_disc_id3(track_offsets)
+            
+            self.logger.info(f"Calculated disc IDs: {disc_id1:08X}, {disc_id2:08X}, {disc_id3:08X}")
+            
+            # Try to get AccurateRip data
+            ar_data = self._get_accuraterip_data_with_ids(disc_id1, disc_id2, disc_id3, len(track_checksums))
+            if not ar_data:
+                self.logger.info("No AccurateRip data available for this disc")
+                return results
+            
+            # Parse AccurateRip data for both v1 and v2
+            ar_entries = self._parse_accuraterip_data(ar_data)
+            
+            # Verify each track against both versions
+            for track_num, checksums in track_checksums.items():
+                track_results = {'v1': False, 'v2': False}
+                
+                # Check v1 checksum
+                if 'v1' in checksums:
+                    track_results['v1'] = self._verify_checksum_against_entries(
+                        track_num, checksums['v1'], ar_entries, version='v1'
+                    )
+                
+                # Check v2 checksum  
+                if 'v2' in checksums:
+                    track_results['v2'] = self._verify_checksum_against_entries(
+                        track_num, checksums['v2'], ar_entries, version='v2'
+                    )
+                
+                results[track_num] = track_results
+                
+                # Log results
+                v1_status = "✅" if track_results['v1'] else "❌"
+                v2_status = "✅" if track_results['v2'] else "❌"
+                self.logger.info(f"Track {track_num}: v1 {v1_status} (checksum: {checksums.get('v1', 0):08X}), v2 {v2_status} (checksum: {checksums.get('v2', 0):08X})")
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Track checksum verification with versions failed: {e}")
+            return {}
     
     def _calculate_disc_id_from_info(self, disc_info) -> Optional[str]:
         """Calculate proper AccurateRip disc ID from track offsets"""
@@ -464,4 +618,72 @@ class AccurateRipChecker:
             
         except Exception as e:
             self.logger.debug(f"Single track verification failed for track {track_num}: {e}")
+            return False
+    
+    def _parse_accuraterip_data(self, ar_data: bytes) -> List[Dict[str, Any]]:
+        """Parse AccurateRip binary data into structured entries"""
+        try:
+            entries = []
+            offset = 0
+            
+            while offset < len(ar_data):
+                if offset + 13 > len(ar_data):
+                    break
+                
+                # Read entry header (13 bytes)
+                track_count = struct.unpack('<B', ar_data[offset:offset+1])[0]
+                disc_id1 = struct.unpack('<I', ar_data[offset+1:offset+5])[0]
+                disc_id2 = struct.unpack('<I', ar_data[offset+5:offset+9])[0]
+                disc_id3 = struct.unpack('<I', ar_data[offset+9:offset+13])[0]
+                
+                offset += 13
+                
+                # Read track checksums (8 bytes per track: 4 bytes v1 + 4 bytes v2)
+                track_checksums = []
+                for track in range(track_count):
+                    if offset + 8 > len(ar_data):
+                        break
+                    
+                    v1_checksum = struct.unpack('<I', ar_data[offset:offset+4])[0]
+                    v2_checksum = struct.unpack('<I', ar_data[offset+4:offset+8])[0]
+                    
+                    track_checksums.append({
+                        'track': track + 1,
+                        'v1': v1_checksum,
+                        'v2': v2_checksum
+                    })
+                    
+                    offset += 8
+                
+                entries.append({
+                    'track_count': track_count,
+                    'disc_id1': disc_id1,
+                    'disc_id2': disc_id2,
+                    'disc_id3': disc_id3,
+                    'checksums': track_checksums
+                })
+                
+                self.logger.debug(f"Parsed AccurateRip entry: {track_count} tracks, IDs: {disc_id1:08X}/{disc_id2:08X}/{disc_id3:08X}")
+            
+            self.logger.info(f"Parsed {len(entries)} AccurateRip entries from {len(ar_data)} bytes")
+            return entries
+            
+        except Exception as e:
+            self.logger.error(f"Failed to parse AccurateRip data: {e}")
+            return []
+    
+    def _verify_checksum_against_entries(self, track_num: int, checksum: int, ar_entries: List[Dict[str, Any]], version: str) -> bool:
+        """Verify a checksum against AccurateRip entries for specific version"""
+        try:
+            for entry in ar_entries:
+                for track_data in entry['checksums']:
+                    if track_data['track'] == track_num:
+                        if version in track_data and track_data[version] == checksum:
+                            self.logger.debug(f"AccurateRip {version} match for track {track_num}: {checksum:08X}")
+                            return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.debug(f"Checksum verification failed for track {track_num} {version}: {e}")
             return False
