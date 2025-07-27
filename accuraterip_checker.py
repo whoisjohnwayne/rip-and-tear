@@ -291,7 +291,8 @@ class AccurateRipChecker:
             self.logger.info(f"Calculated disc IDs: {disc_id1:08X}, {disc_id2:08X}, {disc_id3:08X}")
             
             # Try to get AccurateRip data
-            ar_data = self._get_accuraterip_data_with_ids(disc_id1, disc_id2, disc_id3, len(track_checksums))
+            total_tracks = len(tracks_to_use)  # Use actual track count from disc, not checksums being verified
+            ar_data = self._get_accuraterip_data_with_ids(disc_id1, disc_id2, disc_id3, total_tracks)
             if not ar_data:
                 self.logger.info("No AccurateRip data available for this disc")
                 return []
@@ -355,7 +356,8 @@ class AccurateRipChecker:
             self.logger.info(f"Calculated disc IDs: {disc_id1:08X}, {disc_id2:08X}, {disc_id3:08X}")
             
             # Try to get AccurateRip data
-            ar_data = self._get_accuraterip_data_with_ids(disc_id1, disc_id2, disc_id3, len(track_checksums))
+            total_tracks = len(tracks_to_use)  # Use actual track count from disc, not checksums being verified
+            ar_data = self._get_accuraterip_data_with_ids(disc_id1, disc_id2, disc_id3, total_tracks)
             if not ar_data:
                 self.logger.info("No AccurateRip data available for this disc")
                 return results

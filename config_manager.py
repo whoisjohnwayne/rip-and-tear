@@ -57,7 +57,7 @@ class ConfigManager:
         return {
             'cd_drive': {
                 'device': '/dev/cdrom',
-                'offset': 0,  # Drive offset correction in samples
+                'offset': 6,  # Drive offset correction in samples (common for many drives)
                 'speed': 'max',  # Ripping speed
             },
             'output': {
