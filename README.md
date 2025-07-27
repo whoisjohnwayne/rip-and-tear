@@ -142,7 +142,7 @@ All configuration options are available as environment variables in `docker-comp
 ```yaml
 environment:
   - CD_DEVICE=/dev/cdrom          # CD drive device path
-  - DRIVE_OFFSET=6                # Drive offset correction (samples)
+  - DRIVE_OFFSET=0                # Drive offset correction (samples) - set to your drive's specific offset
   - DRIVE_SPEED=8                 # Ripping speed (1-24 or "max")
   - ENABLE_C2=true                # C2 error detection
   - TEST_AND_COPY=true            # Test read before rip
@@ -235,6 +235,47 @@ cd_drive:
   test_and_copy: true       # Test read before ripping
   speed: "4"                # Lower speed for accuracy
 ```
+
+### Finding Your Drive Offset
+
+Drive offset correction is crucial for accurate rips. Each CD drive has a unique offset that determines how it reads audio data relative to the actual track positions.
+
+#### How to Find Your Drive Offset:
+
+1. **AccurateRip Database**: The most reliable method
+   - Look up your exact drive model at http://www.accuraterip.com/driveoffsets.htm
+   - Find your drive by manufacturer and model number
+   - Use the listed offset value
+
+2. **EAC Drive Features Database**: Alternative source
+   - Visit the Exact Audio Copy drive database
+   - Search for your drive model
+   - Note the "read sample offset correction" value
+
+3. **CUETools Database**: Another option
+   - Check the CUETools drive offset database
+   - Search by manufacturer and model
+
+4. **Manual Testing**: If your drive isn't listed
+   - Rip the same CD with different offset values (-6, 0, +6, +12)
+   - Compare with AccurateRip database results
+   - The offset that gives AccurateRip matches is correct
+
+#### Common Drive Offsets:
+- **Most Pioneer drives**: +6 samples
+- **Most LiteOn drives**: +6 samples  
+- **Most ASUS drives**: +6 samples
+- **Plextor Premium**: +30 samples
+- **Default (unknown drives)**: 0 samples (no correction)
+
+#### Setting Your Drive Offset:
+```yaml
+# In docker-compose.yml
+environment:
+  - DRIVE_OFFSET=6    # Replace with your drive's actual offset
+```
+
+**Important**: Using the wrong offset will result in slight timing errors that prevent AccurateRip verification, even for perfect rips.
 
 ### Metadata Settings
 ```yaml
