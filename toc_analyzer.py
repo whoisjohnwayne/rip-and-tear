@@ -612,7 +612,7 @@ class TOCAnalyzer:
                     
                     track = TrackInfo(
                         number=track_num,
-                        start_sector=0,  # Will be calculated based on previous tracks
+                        start_sector=0,
                         length_sectors=sectors,
                         pregap_sectors=pregap_sectors,
                         track_type='audio'
@@ -824,9 +824,15 @@ class TOCAnalyzer:
                     
                 # Use start_sector from parsed data if available, otherwise calculate
                 start_sector = track_info.get('start_sector', 0)
-                
+                track_number = track_info.get('number', len(tracks) + 1)
+
+                # Skip appending if the track is a leadout and its number equals len(tracks) + 1
+                if track_number == len(tracks) + 1 and track_info.get('track_type') == 'leadout':
+                    self.logger.info(f"Skipping leadout track with number {track_number}")
+                    continue
+
                 track = TrackInfo(
-                    number=track_info.get('number', len(tracks) + 1),
+                    number=track_number,
                     start_sector=start_sector,
                     length_sectors=track_info.get('sectors', 0),
                     track_type='audio'
