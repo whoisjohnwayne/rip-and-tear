@@ -95,9 +95,29 @@
 ### 9. **Rip History & Management**
 - **Improvement**: Show previous rips, manage output files
 
+### 10. **File Conflict Handling**
+- **Issue**: No graceful handling when files with same name already exist
+- **Current**: May overwrite existing files or fail silently
+- **Improvement**: Add options for duplicate file handling (rename, skip, overwrite, ask user)
+- **Priority**: Medium (user experience and data safety)
+
+### 11. **Intelligent Fallback Logic**
+- **Issue**: Currently falls back to paranoia mode for any burst mode failure
+- **Problem**: System errors, cancellations, or config issues trigger unnecessary paranoia mode
+- **Improvement**: Only fall back to paranoia mode for actual ripping/verification failures
+- **Criteria**: Should only use paranoia mode if:
+  - Track cannot be ripped (read errors, damaged disc)
+  - AccurateRip verification fails (audio quality issues)
+- **Should NOT use paranoia mode for**:
+  - User cancellation
+  - System errors (disk space, permissions)
+  - Configuration problems
+  - Network issues (MusicBrainz/AccurateRip unavailable)
+- **Priority**: High (prevents wasted time on unfixable issues)
+
 ## 🔍 **Validation & Testing**
 
-### 10. **Comprehensive Testing Suite**
+### 12. **Comprehensive Testing Suite**
 - **Need**: Automated testing with various disc types
 - **Coverage**: Different track counts, damaged discs, edge cases
 

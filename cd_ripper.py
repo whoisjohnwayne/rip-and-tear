@@ -292,9 +292,9 @@ class CDRipper:
                 
                 # Configurable last track handling to prevent lead-out hanging
                 if i == len(tracks):
-                    last_track_retries = self.config['ripping'].get('last_track_retries', 3)
+                    last_track_retries = self.config['ripping'].get('last_track_retries', 1)
                     last_track_paranoia = self.config['ripping'].get('last_track_paranoia', 'minimal')
-                    leadout_detection = self.config['ripping'].get('leadout_detection', 'auto')
+                    leadout_detection = self.config['ripping'].get('leadout_detection', 'disabled')
                     
                     # Apply last track specific settings
                     cmd.extend(['-n', str(last_track_retries)])
@@ -306,7 +306,9 @@ class CDRipper:
                     # 'full' would remove -Z but that defeats burst mode purpose
                     
                     if leadout_detection == 'disabled':
-                        cmd.append('-p')  # Raw output, bypass lead-out logic
+                        # Use -S flag to abort at end of track instead of -p (raw output)
+                        # This prevents hanging while still producing valid WAV files
+                        cmd.append('-S')
                     elif leadout_detection == 'lenient':
                         cmd.extend(['-C', '1'])  # Allow more read errors
                     # 'strict' and 'auto' use default behavior
@@ -448,6 +450,23 @@ class CDRipper:
         cmd.extend(['--tag', f'TOTALTRACKS={total_tracks}'])
         cmd.append(str(wav_file))
         
+        # Validate WAV file before encoding
+        if not wav_file.exists():
+            self.logger.error(f"WAV file not found for track {track_num}: {wav_file}")
+            return False
+            
+        # Check if file looks like a valid WAV file
+        try:
+            with open(wav_file, 'rb') as f:
+                header = f.read(12)
+                if len(header) < 12 or not header.startswith(b'RIFF') or header[8:12] != b'WAVE':
+                    self.logger.error(f"Track {track_num} WAV file appears corrupted: {wav_file}")
+                    self.logger.error(f"Header: {header.hex() if header else 'empty'}")
+                    return False
+        except Exception as e:
+            self.logger.error(f"Cannot read WAV file for track {track_num}: {e}")
+            return False
+        
         self.logger.debug(f"Using {encoding_timeout}s timeout for track {track_num} ({track_minutes:.1f} minutes)")
         
         # Use cancellable subprocess for FLAC encoding
@@ -460,6 +479,10 @@ class CDRipper:
         
         if result.returncode != 0:
             self.logger.error(f"Failed to encode track {track_num} to FLAC: {result.stderr}")
+            # If encoding failed, check if it's due to corrupted WAV
+            if "is not a WAVE file" in result.stderr or "treating as a raw file" in result.stderr:
+                self.logger.error(f"WAV file for track {track_num} appears to be corrupted by cdparanoia")
+                self.logger.error("This may be caused by lead-out detection issues on the last track")
             return False
         
         self.logger.info(f"Encoded track {track_num} to FLAC")
@@ -472,44 +495,22 @@ class CDRipper:
                 self.logger.error(f"WAV file not found for verification: {wav_file}")
                 return False
             
-            # Calculate both v1 and v2 checksums for this track
-            with open(wav_file, 'rb') as f:
-                header = f.read(44)
-                if not (header.startswith(b'RIFF') and b'WAVE' in header):
-                    self.logger.error(f"Invalid WAV file format: {wav_file}")
-                    return False
-                
-                audio_data = f.read()
-                v1_checksum = self.accuraterip_checker._calculate_accuraterip_v1_checksum(audio_data)
-                v2_checksum = self.accuraterip_checker._calculate_accuraterip_v2_checksum(audio_data)
+            # Use the existing AccurateRip checker method
+            verification_results = self.accuraterip_checker.verify_track_with_versions(wav_file, track_num, disc_info)
             
-            # Get AccurateRip database data for this disc
-            disc_id = self.accuraterip_checker._calculate_disc_id(disc_info)
-            ar_data = self.accuraterip_checker._fetch_accuraterip_data(disc_id)
+            # Check if either v1 or v2 verification passed
+            v1_passed = verification_results.get('v1', False)
+            v2_passed = verification_results.get('v2', False)
             
-            if not ar_data:
-                self.logger.info(f"Track {track_num}: No AccurateRip data available")
-                return True  # Consider it verified if no data to compare against
-            
-            # Check if this track's checksum matches any in the database
-            for entry in ar_data:
-                if len(entry.get('tracks', [])) >= track_num:
-                    track_data = entry['tracks'][track_num - 1]
-                    
-                    # Check v1 checksum
-                    if track_data.get('v1_checksum') == v1_checksum:
-                        confidence = track_data.get('confidence', 0)
-                        self.logger.info(f"Track {track_num}: AccurateRip v1 verified (confidence: {confidence})")
-                        return True
-                    
-                    # Check v2 checksum  
-                    if track_data.get('v2_checksum') == v2_checksum:
-                        confidence = track_data.get('confidence', 0)
-                        self.logger.info(f"Track {track_num}: AccurateRip v2 verified (confidence: {confidence})")
-                        return True
-            
-            self.logger.warning(f"Track {track_num}: No AccurateRip match found")
-            return False
+            if v1_passed or v2_passed:
+                version = "v1" if v1_passed else "v2"
+                if v1_passed and v2_passed:
+                    version = "v1+v2"
+                self.logger.info(f"Track {track_num}: AccurateRip {version} verified")
+                return True
+            else:
+                self.logger.warning(f"Track {track_num}: No AccurateRip match found")
+                return False
             
         except Exception as e:
             self.logger.error(f"Error verifying track {track_num} with AccurateRip: {e}")
