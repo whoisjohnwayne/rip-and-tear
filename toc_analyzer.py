@@ -10,6 +10,12 @@ import re
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 
+try:
+    import discid
+    DISCID_AVAILABLE = True
+except ImportError:
+    DISCID_AVAILABLE = False
+
 @dataclass
 class TrackInfo:
     """Enhanced track information with gap data"""
@@ -53,7 +59,8 @@ class DiscInfo:
     last_track: int
     tracks: List[TrackInfo]
     has_cd_text: bool = False
-    disc_id: Optional[str] = None
+    disc_id: Optional[str] = None  # General disc ID (cd-discid output)
+    musicbrainz_disc_id: Optional[str] = None  # MusicBrainz-specific disc ID
     catalog_number: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -80,6 +87,7 @@ class DiscInfo:
             ],
             'has_cd_text': self.has_cd_text,
             'disc_id': self.disc_id,
+            'musicbrainz_disc_id': self.musicbrainz_disc_id,
             'catalog_number': self.catalog_number
         }
 
@@ -120,6 +128,9 @@ class TOCAnalyzer:
             # Get disc identification
             disc_id = self._calculate_precise_disc_id(detailed_tracks)
             
+            # Calculate MusicBrainz disc ID using python-discid if available
+            musicbrainz_disc_id = self._calculate_musicbrainz_disc_id(detailed_tracks)
+            
             disc_info = DiscInfo(
                 total_sectors=basic_toc.get('total_sectors', sum(t.length_sectors for t in detailed_tracks)),
                 leadout_sector=basic_toc.get('leadout_sector', sum(t.length_sectors for t in detailed_tracks)),
@@ -128,6 +139,7 @@ class TOCAnalyzer:
                 tracks=detailed_tracks,
                 has_cd_text=bool(cd_text),
                 disc_id=disc_id,
+                musicbrainz_disc_id=musicbrainz_disc_id,
                 catalog_number=self._get_catalog_number()
             )
             
@@ -356,6 +368,71 @@ class TOCAnalyzer:
         except Exception as e:
             self.logger.error(f"Disc ID calculation failed: {e}")
             return "UNKNOWN"
+    
+    def _calculate_musicbrainz_disc_id(self, tracks: List[TrackInfo]) -> Optional[str]:
+        """Calculate proper MusicBrainz disc ID using python-discid"""
+        try:
+            if not DISCID_AVAILABLE:
+                self.logger.warning("python-discid not available, falling back to cd-discid command")
+                return self._calculate_musicbrainz_disc_id_fallback(tracks)
+            
+            # Use python-discid for proper MusicBrainz disc ID calculation
+            self.logger.info("Calculating MusicBrainz disc ID using python-discid")
+            
+            # Create track offsets list for discid
+            # MusicBrainz expects: [track1_offset, track2_offset, ..., leadout_offset]
+            track_offsets = []
+            
+            for track in tracks:
+                # CD offset standard: track start + 150 sectors (2 seconds)
+                offset = track.start_sector + 150
+                track_offsets.append(offset)
+            
+            # Add leadout offset
+            if tracks:
+                last_track = tracks[-1]
+                leadout = last_track.start_sector + last_track.length_sectors + 150
+                track_offsets.append(leadout)
+            
+            self.logger.debug(f"Track offsets for MusicBrainz: {track_offsets}")
+            
+            # Calculate disc ID using python-discid
+            disc = discid.put(len(tracks), track_offsets)
+            musicbrainz_id = disc.id
+            
+            self.logger.info(f"Calculated MusicBrainz disc ID: {musicbrainz_id}")
+            return musicbrainz_id
+            
+        except Exception as e:
+            self.logger.error(f"MusicBrainz disc ID calculation failed: {e}")
+            return self._calculate_musicbrainz_disc_id_fallback(tracks)
+    
+    def _calculate_musicbrainz_disc_id_fallback(self, tracks: List[TrackInfo]) -> Optional[str]:
+        """Fallback MusicBrainz disc ID calculation using cd-discid command"""
+        try:
+            self.logger.info("Using cd-discid fallback for MusicBrainz disc ID")
+            
+            result = subprocess.run(
+                ['cd-discid', self.device],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                # cd-discid output format: "discid track_count offset1 offset2 ... leadout_offset track_length"
+                parts = result.stdout.strip().split()
+                if len(parts) >= 1:
+                    disc_id = parts[0]
+                    self.logger.info(f"MusicBrainz disc ID from cd-discid: {disc_id}")
+                    return disc_id
+            
+            self.logger.warning("cd-discid fallback failed")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"MusicBrainz disc ID fallback failed: {e}")
+            return None
     
     def _get_catalog_number(self) -> Optional[str]:
         """Get catalog number (UPC/EAN) if available"""
@@ -643,6 +720,8 @@ class TOCAnalyzer:
         """Log comprehensive disc analysis results"""
         self.logger.info("=== Disc Analysis Results ===")
         self.logger.info(f"Disc ID: {disc_info.disc_id}")
+        if disc_info.musicbrainz_disc_id:
+            self.logger.info(f"MusicBrainz Disc ID: {disc_info.musicbrainz_disc_id}")
         self.logger.info(f"Total sectors: {disc_info.total_sectors}")
         self.logger.info(f"Tracks: {disc_info.first_track}-{disc_info.last_track}")
         self.logger.info(f"CD-Text available: {disc_info.has_cd_text}")

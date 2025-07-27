@@ -38,6 +38,8 @@ class CueGenerator:
         lines.append(f'REM GENRE "Unknown"')
         lines.append(f'REM DATE "{metadata.get("date", "")}"')
         lines.append(f'REM DISCID "{disc_info.disc_id}"')
+        if disc_info.musicbrainz_disc_id:
+            lines.append(f'REM MUSICBRAINZ_DISCID "{disc_info.musicbrainz_disc_id}"')
         lines.append(f'REM COMMENT "Ripped with Rip and Tear"')
         
         if disc_info.catalog_number:

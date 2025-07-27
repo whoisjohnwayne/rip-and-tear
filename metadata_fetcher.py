@@ -66,9 +66,18 @@ class MetadataFetcher:
             return self._get_default_metadata(toc_info)
         
         try:
-            # Use the real disc ID from TOC analysis if available
+            # Prefer MusicBrainz disc ID if available, fall back to general disc_id
+            musicbrainz_disc_id = toc_info.get('musicbrainz_disc_id')
             disc_id = toc_info.get('disc_id')
-            if disc_id and disc_id != "UNKNOWN":
+            
+            if musicbrainz_disc_id:
+                self.logger.info(f"Using MusicBrainz disc ID: {musicbrainz_disc_id}")
+                release_info = self._search_by_disc_id(musicbrainz_disc_id)
+                if release_info:
+                    self.logger.info(f"Found exact MusicBrainz disc match: {release_info['artist']} - {release_info['album']}")
+                    return release_info
+            elif disc_id and disc_id != "UNKNOWN":
+                self.logger.info(f"Using fallback disc ID: {disc_id}")
                 release_info = self._search_by_disc_id(disc_id)
                 if release_info:
                     self.logger.info(f"Found exact disc match: {release_info['artist']} - {release_info['album']}")
