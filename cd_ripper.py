@@ -106,7 +106,7 @@ class CDRipper:
                     return False
                     
                 self._update_status(RipStatus.RIPPING_BURST)
-                burst_success = self._rip_burst_mode(disc_info, album_dir)
+                burst_success = self._rip_burst_mode(disc_info, album_dir, metadata)
                 
                 # Check for cancellation - if cancelled during burst mode, abort completely
                 if self._check_cancelled():
@@ -124,7 +124,7 @@ class CDRipper:
                     
                     if not failed_tracks:
                         self.logger.info("All tracks verified with AccurateRip in burst mode")
-                        return self._finalize_rip(disc_info, metadata, album_dir)
+                        return self._finalize_rip(disc_info, metadata, album_dir, skip_encoding=True)
                     else:
                         self.logger.warning(f"AccurateRip verification failed for tracks: {failed_tracks}")
                         self.logger.info("Re-ripping failed tracks in paranoia mode...")
@@ -293,15 +293,16 @@ class CDRipper:
         filename = ' '.join(filename.split())
         return filename.strip()
     
-    def _rip_burst_mode(self, disc_info: DiscInfo, output_dir: Path) -> bool:
-        """Rip in burst mode (fast) with enhanced gap handling"""
+    def _rip_burst_mode(self, disc_info: DiscInfo, output_dir: Path, metadata: Dict[str, Any] = None) -> bool:
+        """Rip in burst mode (fast) with immediate per-track encoding"""
         device = self.config['cd_drive']['device']
         tracks = disc_info.tracks
         
         try:
             for i, track in enumerate(tracks, 1):
                 self.current_track = i
-                self.progress = int((i - 1) / len(tracks) * 100)
+                # Progress: 50% for ripping, 50% for encoding per track
+                base_progress = int((i - 1) / len(tracks) * 100)
                 
                 track_file = output_dir / f"{i:02d}.wav"
                 
@@ -335,6 +336,8 @@ class CDRipper:
                 if self._check_cancelled():
                     return False
                 
+                self.logger.info(f"Ripping track {i}...")
+                self.progress = base_progress
                 result = self._run_cancellable_subprocess(track_cmd, timeout=600)
                 
                 # Check for cancellation after ripping
@@ -345,7 +348,19 @@ class CDRipper:
                     self.logger.error(f"Failed to rip track {i}: {result.stderr}")
                     return False
                 
-                self.logger.info(f"Ripped track {i} in burst mode")
+                self.logger.info(f"Ripped track {i}, now encoding to FLAC...")
+                
+                # Immediately encode this track to FLAC
+                self.progress = base_progress + int(50 / len(tracks))
+                if not self._encode_single_track(i, track, track_file, output_dir, metadata):
+                    return False
+                
+                # Check for cancellation after encoding
+                if self._check_cancelled():
+                    return False
+                
+                self.logger.info(f"Completed track {i} (ripped and encoded)")
+                self.progress = int(i / len(tracks) * 100)
             
             return True
             
@@ -355,6 +370,81 @@ class CDRipper:
         except Exception as e:
             self.logger.error(f"Burst mode ripping failed: {e}")
             return False
+    
+    def _encode_single_track(self, track_num: int, track_info: Any, wav_file: Path, output_dir: Path, metadata: Dict[str, Any] = None) -> bool:
+        """Encode a single track to FLAC and delete the WAV file"""
+        if not wav_file.exists():
+            self.logger.error(f"WAV file not found: {wav_file}")
+            return False
+        
+        # Check for cancellation before encoding
+        if self._check_cancelled():
+            self.logger.info("Track encoding cancelled by user")
+            return False
+        
+        # Get track metadata
+        track_meta = {}
+        if metadata and metadata.get('tracks') and track_num <= len(metadata['tracks']):
+            track_meta = metadata['tracks'][track_num-1]
+        
+        flac_file = output_dir / f"{track_num:02d} - {self._sanitize_filename(track_meta.get('title', f'Track {track_num:02d}'))}.flac"
+        
+        # Build FLAC encoding command
+        cmd = [
+            'flac',
+            f'--compression-level-{self.config["output"]["compression_level"]}',
+            '--delete-input-file',  # This will delete the WAV after encoding
+            f'--output-name={flac_file}',
+        ]
+        
+        # Add metadata tags
+        if metadata:
+            if metadata.get('artist'):
+                cmd.extend(['--tag', f'ARTIST={metadata["artist"]}'])
+            if metadata.get('album'):
+                cmd.extend(['--tag', f'ALBUM={metadata["album"]}'])
+            if metadata.get('date'):
+                cmd.extend(['--tag', f'DATE={metadata["date"]}'])
+        
+        if track_meta.get('title'):
+            cmd.extend(['--tag', f'TITLE={track_meta["title"]}'])
+        if track_meta.get('artist'):
+            cmd.extend(['--tag', f'ARTIST={track_meta["artist"]}'])
+        
+        # Calculate dynamic timeout based on track duration
+        track_duration_str = getattr(track_info, 'duration', '4:00') if hasattr(track_info, 'duration') else '4:00'
+        try:
+            if ':' in track_duration_str:
+                parts = track_duration_str.split(':')
+                track_minutes = int(parts[0]) + float(parts[1]) / 60
+            else:
+                track_minutes = 4.0  # Fallback
+            encoding_timeout = max(120, int(track_minutes * 3 + 60))  # Min 2 minutes, scale with length
+        except (ValueError, IndexError):
+            encoding_timeout = 300  # Fallback for parsing errors
+        
+        # Add track number tags
+        total_tracks = len(metadata.get('tracks', [])) if metadata else 1
+        cmd.extend(['--tag', f'TRACKNUMBER={track_num}'])
+        cmd.extend(['--tag', f'TOTALTRACKS={total_tracks}'])
+        cmd.append(str(wav_file))
+        
+        self.logger.debug(f"Using {encoding_timeout}s timeout for {track_duration_str} track")
+        
+        # Use cancellable subprocess for FLAC encoding
+        result = self._run_cancellable_subprocess(cmd, timeout=encoding_timeout)
+        
+        # Check for cancellation after encoding
+        if self._check_cancelled():
+            self.logger.info("Track encoding cancelled by user")
+            return False
+        
+        if result.returncode != 0:
+            self.logger.error(f"Failed to encode track {track_num} to FLAC: {result.stderr}")
+            return False
+        
+        self.logger.info(f"Encoded track {track_num} to FLAC")
+        return True
     
     def _rip_paranoia_mode(self, disc_info: DiscInfo, output_dir: Path) -> bool:
         """Rip in paranoia mode (slow but accurate) with gap preservation"""
@@ -587,26 +677,52 @@ class CDRipper:
             self.logger.error(f"Failed to re-rip tracks in paranoia mode: {e}")
             return False
     
-    def _finalize_rip(self, disc_info: DiscInfo, metadata: Dict[str, Any], output_dir: Path) -> bool:
+    def _finalize_rip(self, disc_info: DiscInfo, metadata: Dict[str, Any], output_dir: Path, skip_encoding: bool = False) -> bool:
         """Finalize the rip by encoding to FLAC and creating CUE/log"""
         try:
-            # Encode to FLAC
-            self._update_status(RipStatus.ENCODING)
-            if not self._encode_to_flac(disc_info, metadata, output_dir):
+            # Check for cancellation before processing
+            if self._check_cancelled():
+                self.logger.info("Finalization cancelled by user")
                 return False
+                
+            # Encode to FLAC (only if not already done per-track)
+            if not skip_encoding:
+                self._update_status(RipStatus.ENCODING)
+                if not self._encode_to_flac(disc_info, metadata, output_dir):
+                    return False
+                
+                # Check for cancellation after encoding
+                if self._check_cancelled():
+                    self.logger.info("Finalization cancelled by user after encoding")
+                    return False
+            else:
+                self.logger.info("Skipping batch encoding (already done per-track)")
             
             # Create CUE sheet with gap information
             if self.config['output']['create_cue']:
                 self._update_status(RipStatus.CREATING_CUE)
                 self.cue_generator.create_cue_sheet(disc_info, metadata, output_dir)
+                
+                # Check for cancellation after CUE creation
+                if self._check_cancelled():
+                    self.logger.info("Finalization cancelled by user after CUE creation")
+                    return False
             
             # Create log file
             if self.config['output']['create_log']:
                 self._create_log_file(disc_info, metadata, output_dir)
             
-            # Clean up WAV files
-            for wav_file in output_dir.glob("*.wav"):
-                wav_file.unlink()
+            # Check for cancellation before cleanup
+            if self._check_cancelled():
+                self.logger.info("Finalization cancelled by user before cleanup")
+                return False
+            
+            # Clean up any remaining WAV files (should be none if per-track encoding worked)
+            remaining_wavs = list(output_dir.glob("*.wav"))
+            if remaining_wavs:
+                self.logger.info(f"Cleaning up {len(remaining_wavs)} remaining WAV files...")
+                for wav_file in remaining_wavs:
+                    wav_file.unlink()
             
             self._update_status(RipStatus.COMPLETED)
             elapsed_time = datetime.now() - self.rip_start_time
@@ -624,6 +740,11 @@ class CDRipper:
         track_metadata = metadata.get('tracks', [])
         
         for i, track in enumerate(tracks, 1):
+            # Check for cancellation before encoding each track
+            if self._check_cancelled():
+                self.logger.info("Encoding cancelled by user")
+                return False
+                
             wav_file = output_dir / f"{i:02d}.wav"
             if not wav_file.exists():
                 self.logger.error(f"WAV file not found: {wav_file}")
@@ -660,7 +781,30 @@ class CDRipper:
             cmd.extend(['--tag', f'TOTALTRACKS={len(tracks)}'])
             cmd.append(str(wav_file))
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            self.logger.info(f"Encoding track {i} to FLAC...")
+            
+            # Calculate dynamic timeout based on track duration
+            # Rule: 3 seconds per minute of audio + 60 second base (very conservative)
+            track_duration_str = track.get('duration', '4:00')  # Default to 4 minutes if unknown
+            try:
+                if ':' in track_duration_str:
+                    parts = track_duration_str.split(':')
+                    track_minutes = int(parts[0]) + float(parts[1]) / 60
+                else:
+                    track_minutes = 4.0  # Fallback
+                encoding_timeout = max(120, int(track_minutes * 3 + 60))  # Min 2 minutes, scale with length
+            except (ValueError, IndexError):
+                encoding_timeout = 300  # Fallback for parsing errors
+            
+            self.logger.debug(f"Using {encoding_timeout}s timeout for {track_duration_str} track")
+            
+            # Use cancellable subprocess for FLAC encoding
+            result = self._run_cancellable_subprocess(cmd, timeout=encoding_timeout)
+            
+            # Check for cancellation after encoding
+            if self._check_cancelled():
+                self.logger.info("Encoding cancelled by user")
+                return False
             
             if result.returncode != 0:
                 self.logger.error(f"Failed to encode track {i} to FLAC: {result.stderr}")
