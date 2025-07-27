@@ -19,7 +19,9 @@ from datetime import datetime
 from metadata_fetcher import MetadataFetcher
 from cue_generator import CueGenerator
 from accuraterip_checker import AccurateRipChecker
+
 from toc_analyzer import TOCAnalyzer, DiscInfo
+from drive_db import drive_supports_overread
 
 class RipStatus:
     """Status tracking for rip operations"""
@@ -384,10 +386,19 @@ class CDRipper:
                     last_track_retries = self.config['last_track'].get('retries', 1)
                     last_track_paranoia = self.config['last_track'].get('paranoia', 'minimal')
                     leadout_detection = self.config['last_track'].get('leadout_detection', False)
+                    force_overread = self.config['last_track'].get('force_overread', True)
+                    # Check drive capability for overread
+                    enable_overread = force_overread and drive_supports_overread(device)
                     # For last track, rebuild command with special handling
                     track_cmd = [
                         'cd-paranoia',
-                        '--force-overread',
+                    ]
+                    if enable_overread:
+                        track_cmd.append('--force-overread')
+                        self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
+                    else:
+                        self.logger.info(f"Drive does not support overread: NOT enabling --force-overread for last track.")
+                    track_cmd += [
                         '-d', device,
                         '-z',  # Never ask, never tell
                         '-Y',  # Most lenient, bypass lead-out verification
