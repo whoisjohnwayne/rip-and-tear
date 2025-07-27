@@ -66,15 +66,13 @@ class CDMonitor:
         try:
             # Try to read the CD table of contents
             result = subprocess.run(
-                ['cdparanoia', '-Q', '-d', device],
+                ['cd-paranoia', '-Q', '-d', device],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
-            
-            # If cdparanoia can read the TOC, a CD is present
+            # If cd-paranoia can read the TOC, a CD is present
             return result.returncode == 0 and 'track' in result.stderr.lower()
-            
         except subprocess.TimeoutExpired:
             self.logger.warning("CD check timed out")
             return False

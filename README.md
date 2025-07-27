@@ -420,7 +420,7 @@ The application is modular with separate components for:
 ## Dependencies
 
 ### System Tools
-- `cdparanoia`: CD ripping
+- `cd-paranoia`: CD ripping
 - `flac`: FLAC encoding
 - `cdrdao`: CUE sheet support
 
@@ -451,7 +451,7 @@ For issues and questions:
 
 ## Acknowledgments
 
-- **cdparanoia**: CD ripping engine
+- **cd-paranoia**: CD ripping engine
 - **FLAC**: Audio encoding
 - **MusicBrainz**: Metadata database
 - **AccurateRip**: Rip verification database
@@ -473,8 +473,8 @@ The MIT License is chosen for this project because:
 
 This project uses several open source dependencies, each with their own licenses:
 - **Flask**: BSD-3-Clause License
-- **cdparanoia**: GPL-2.0 License (system dependency)
+- **cd-paranoia**: GPL-2.0 License (system dependency)
 - **FLAC**: BSD-3-Clause License (system dependency)
 - **MusicBrainz API**: Creative Commons (data), various licenses (software)
 
-Note: While this application code is MIT licensed, some system dependencies (like cdparanoia) are GPL licensed. This doesn't affect your use of the application but may impact redistribution of modified versions.
+Note: While this application code is MIT licensed, some system dependencies (like cd-paranoia) are GPL licensed. This doesn't affect your use of the application but may impact redistribution of modified versions.

@@ -2,7 +2,7 @@
 """
 CD Ripper - Main ripping functionality
 Handles the actual CD ripping process with burst mode, AccurateRip verification,
-and fallback to cdparanoia
+and fallback to cd-paranoia (libcdio-paranoia)
 """
 
 import os
@@ -177,7 +177,7 @@ class CDRipper:
             return None
     
     def _parse_toc_output(self, toc_output: str) -> Dict[str, Any]:
-        """Parse cdparanoia TOC output with robust error handling"""
+        """Parse cd-paranoia TOC output with robust error handling"""
         tracks = []
         lines = toc_output.strip().split('\n')
         
@@ -296,7 +296,7 @@ class CDRipper:
             self.logger.warning(f"Last track is very short ({last_track.length_seconds:.2f}s) - may cause lead-out issues")
         
         if total_tracks >= 99:
-            self.logger.warning("Disc has 99 tracks - known cdparanoia issue (see whipper issue #302)")
+            self.logger.warning("Disc has 99 tracks - known cd-paranoia issue (see whipper issue #302)")
             
         drive_offset = self.config['cd_drive']['offset']
         if abs(drive_offset) > 587:
@@ -377,7 +377,7 @@ class CDRipper:
                     track_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
                 # Debug: Log the exact command being executed
-                self.logger.info(f"Executing cdparanoia command: {' '.join(track_cmd)}")
+                self.logger.info(f"Executing cd-paranoia command: {' '.join(track_cmd)}")
                 
                 # Check for cancellation before ripping
                 if self._check_cancelled():
@@ -392,7 +392,7 @@ class CDRipper:
                     return False
                 
                 if result.returncode != 0:
-                    # Special handling for last track errors - cdparanoia often has issues with lead-out detection
+                    # Special handling for last track errors - cd-paranoia often has issues with lead-out detection
                     if i == len(tracks):
                         error_msg = result.stderr.lower()
                         if any(term in error_msg for term in ['last_track', 'lead-out', 'leadout', 'end of disc', 'overread']):
@@ -401,7 +401,7 @@ class CDRipper:
                             
                             # Try alternative command for problematic last tracks
                             recovery_cmd = [
-                                'cdparanoia',
+                                'cd-paranoia',
                                 '-d', device,
                                 '-z',  # Never ask, never tell
                                 '-Y',  # Most lenient paranoia mode
@@ -568,7 +568,7 @@ class CDRipper:
             self.logger.error(f"Failed to encode track {track_num} to FLAC: {result.stderr}")
             # If encoding failed, check if it's due to corrupted WAV
             if "is not a WAVE file" in result.stderr or "treating as a raw file" in result.stderr:
-                self.logger.error(f"WAV file for track {track_num} appears to be corrupted by cdparanoia")
+                self.logger.error(f"WAV file for track {track_num} appears to be corrupted by cd-paranoia")
                 self.logger.error("This may be caused by lead-out detection issues on the last track")
             return False
         
@@ -627,7 +627,7 @@ class CDRipper:
                 
                 track_file = output_dir / f"{i:02d}.wav"
                 
-                # Use cdparanoia in paranoia mode
+                # Use cd-paranoia in paranoia mode
                 cmd = [
                     'cd-paranoia',
                     '-d', device,
@@ -880,9 +880,9 @@ class CDRipper:
                     track_file.unlink()
                     self.logger.debug(f"Removed existing file: {track_file}")
                 
-                # Use cdparanoia in paranoia mode for this specific track
+                # Use cd-paranoia in paranoia mode for this specific track
                 cmd = [
-                    'cdparanoia',
+                    'cd-paranoia',
                     '-d', device,
                     '-z',  # Never ask, never tell
                     f'{track_num}',
@@ -1161,7 +1161,7 @@ class CDRipper:
     def get_status(self) -> Dict[str, Any]:
         """Get current ripping status"""
         # If we're actively working with the CD, assume it's present to avoid conflicts
-        # with cdparanoia processes already accessing the drive
+        # with cd-paranoia processes already accessing the drive
         active_states = [
             RipStatus.READING_TOC,
             RipStatus.FETCHING_METADATA,

@@ -155,51 +155,51 @@ class TOCAnalyzer:
             return None
     
     def _get_basic_toc(self) -> Optional[Dict[str, Any]]:
-        """Get basic TOC using cdparanoia (most reliable method)"""
+        """Get basic TOC using cd-paranoia (most reliable method)"""
         try:
             result = self._get_toc_cdparanoia()
             if result:
-                self.logger.info("TOC obtained using cdparanoia")
+                self.logger.info("TOC obtained using cd-paranoia")
                 return result
             else:
-                self.logger.error("Failed to get TOC using cdparanoia")
+                self.logger.error("Failed to get TOC using cd-paranoia")
                 return None
         except Exception as e:
-            self.logger.error(f"cdparanoia failed: {e}")
+            self.logger.error(f"cd-paranoia failed: {e}")
             return None
     
     def _get_toc_cdparanoia(self) -> Optional[Dict[str, Any]]:
-        """Get TOC using cdparanoia"""
+        """Get TOC using cd-paranoia"""
         try:
             result = subprocess.run(
-                ['cdparanoia', '-Q', '-d', self.device],
+                ['cd-paranoia', '-Q', '-d', self.device],
                 capture_output=True,
                 text=True,
                 timeout=30
             )
             
             if result.returncode != 0:
-                self.logger.error(f"cdparanoia failed with return code {result.returncode}")
+                self.logger.error(f"cd-paranoia failed with return code {result.returncode}")
                 if result.stderr:
-                    self.logger.error(f"cdparanoia stderr: {result.stderr}")
+                    self.logger.error(f"cd-paranoia stderr: {result.stderr}")
                 return None
             
             # Log the ACTUAL output so we can see what we're trying to parse
-            self.logger.info("=== RAW CDPARANOIA OUTPUT ===")
+            self.logger.info("=== RAW CD-PARANOIA OUTPUT ===")
             self.logger.info(f"STDOUT:\n{result.stdout}")
             self.logger.info(f"STDERR:\n{result.stderr}")
             self.logger.info("=== END RAW OUTPUT ===")
             
-            # cdparanoia outputs to STDERR, not STDOUT
+            # cd-paranoia outputs to STDERR, not STDOUT
             output_to_parse = result.stderr if result.stderr.strip() else result.stdout
             
             return self._parse_cdparanoia_output(output_to_parse)
         
         except subprocess.TimeoutExpired:
-            self.logger.error("cdparanoia timed out")
+            self.logger.error("cd-paranoia timed out")
             return None
         except Exception as e:
-            self.logger.error(f"cdparanoia execution failed: {e}")
+            self.logger.error(f"cd-paranoia execution failed: {e}")
             return None
     
     def _get_toc_cdrdao(self) -> Optional[Dict[str, Any]]:
@@ -240,9 +240,9 @@ class TOCAnalyzer:
         
         # Try to enhance with gap information if tools are available
         try:
-            # First, try cdparanoia verbose for additional gap info
+            # First, try cd-paranoia verbose for additional gap info
             result = subprocess.run(
-                ['cdparanoia', '-Q', '-d', self.device, '-v'],
+                ['cd-paranoia', '-Q', '-d', self.device, '-v'],
                 capture_output=True, text=True, timeout=30
             )
             
@@ -253,7 +253,7 @@ class TOCAnalyzer:
                     for i, enhanced_track in enumerate(enhanced_tracks):
                         if i < len(tracks):
                             tracks[i].pregap_sectors = enhanced_track.pregap_sectors
-                    self.logger.info("Enhanced tracks with gap information from cdparanoia")
+                    self.logger.info("Enhanced tracks with gap information from cd-paranoia")
                 
         except Exception as e:
             self.logger.debug(f"Gap enhancement failed (not critical): {e}")
@@ -298,7 +298,7 @@ class TOCAnalyzer:
         try:
             # Check if there's audio before track 1
             result = subprocess.run([
-                'cdparanoia', '-d', self.device, 
+                'cd-paranoia', '-d', self.device, 
                 '-Q', '-v'  # Query mode with verbose output
             ], capture_output=True, text=True, timeout=30)
             

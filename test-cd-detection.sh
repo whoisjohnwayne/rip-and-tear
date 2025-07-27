@@ -16,13 +16,13 @@ else
 fi
 echo
 
-echo "2. 🎵 Testing cdparanoia..."
-if command -v cdparanoia >/dev/null 2>&1; then
-    echo "✅ cdparanoia is available"
+echo "2. 🎵 Testing cd-paranoia..."
+if command -v cd-paranoia >/dev/null 2>&1; then
+    echo "✅ cd-paranoia is available"
     echo "Testing CD query (insert a CD first):"
-    timeout 10s cdparanoia -Q -d /dev/cdrom 2>&1 | head -10
+    timeout 10s cd-paranoia -Q -d /dev/cdrom 2>&1 | head -10
 else
-    echo "❌ cdparanoia not found"
+    echo "❌ cd-paranoia not found"
 fi
 echo
 
@@ -52,12 +52,12 @@ device = '/dev/cdrom'
 print(f'Testing device: {device}')
 
 try:
-    # Test cdparanoia
-    result = subprocess.run(['cdparanoia', '-Q', '-d', device], 
+    # Test cd-paranoia
+    result = subprocess.run(['cd-paranoia', '-Q', '-d', device], 
                           capture_output=True, text=True, timeout=5)
     
     if result.returncode == 0 and 'track' in result.stderr.lower():
-        print('✅ CD detected by cdparanoia')
+        print('✅ CD detected by cd-paranoia')
         
         # Test cd-discid
         try:
@@ -71,7 +71,7 @@ try:
         except Exception as e:
             print(f'⚠️ cd-discid error: {e}')
     else:
-        print('❌ No CD detected by cdparanoia')
+        print('❌ No CD detected by cd-paranoia')
         print(f'Return code: {result.returncode}')
         print(f'Stderr: {result.stderr[:200]}')
         
