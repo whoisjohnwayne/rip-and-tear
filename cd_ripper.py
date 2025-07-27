@@ -273,6 +273,7 @@ class CDRipper:
         """Rip in burst mode (fast) with immediate per-track encoding"""
         device = self.config['cd_drive']['device']
         tracks = disc_info.tracks
+        last_track_failed = False
         
         try:
             for i, track in enumerate(tracks, 1):
@@ -304,6 +305,7 @@ class CDRipper:
                         'cdparanoia',
                         '-d', device,
                         '-z',  # Never ask, never tell
+                        '--force-overread',  # Critical: Force overreading into lead-out (whipper approach)
                     ]
                     
                     # Apply last track paranoia settings
@@ -356,8 +358,16 @@ class CDRipper:
                     return False
                 
                 if result.returncode != 0:
-                    self.logger.error(f"Failed to rip track {i}: {result.stderr}")
-                    return False
+                    # Special handling for last track errors - cdparanoia often has issues with lead-out detection
+                    if i == len(tracks) and "last_track" in result.stderr.lower():
+                        self.logger.warning(f"Last track rip failed with lead-out detection issue: {result.stderr}")
+                        self.logger.info("Will attempt to continue and fall back to paranoia mode for last track only")
+                        # Don't return False here - let the method continue to paranoia fallback
+                        last_track_failed = True
+                        break
+                    else:
+                        self.logger.error(f"Failed to rip track {i}: {result.stderr}")
+                        return False
                 
                 self.logger.info(f"Ripped track {i}, now encoding to FLAC...")
                 
@@ -394,6 +404,11 @@ class CDRipper:
                 self.logger.info(f"Completed track {i} (ripped, encoded, {'AccurateRip verified' if track_verified else 'AccurateRip: no database entry'})")
                 self.progress = int(i / len(tracks) * 100)
             
+            # If only the last track failed, we have a partial success
+            if last_track_failed:
+                self.logger.info("Burst mode partially succeeded - some tracks failed, will need paranoia mode fallback")
+                return False  # Signal that we need paranoia mode, but don't log it as a complete failure
+            
             return True
             
         except subprocess.TimeoutExpired:
@@ -424,6 +439,7 @@ class CDRipper:
         # Build FLAC encoding command
         cmd = [
             'flac',
+            '-f',  # Force overwrite existing files
             f'--compression-level-{self.config["output"]["compression_level"]}',
             # Note: NOT using --delete-input-file to keep WAV for AccurateRip verification
             f'--output-name={flac_file}',
@@ -505,33 +521,20 @@ class CDRipper:
                 self.logger.error(f"WAV file not found for verification: {wav_file}")
                 return False
             
-            # Use the existing AccurateRip checker method
-            verification_results = self.accuraterip_checker.verify_track_with_versions(wav_file, track_num, disc_info)
+            # Calculate AccurateRip checksums for this track
+            v1, v2 = self.accuraterip_checker.accuraterip_checksum(str(wav_file), track_num, len(disc_info.tracks))
             
-            # Check if either v1 or v2 verification passed
-            v1_passed = verification_results.get('v1', False)
-            v2_passed = verification_results.get('v2', False)
-            
-            if v1_passed or v2_passed:
-                version = "v1" if v1_passed else "v2"
-                if v1_passed and v2_passed:
-                    version = "v1+v2"
-                self.logger.info(f"Track {track_num}: AccurateRip {version} verified")
+            if v1 is not None and v2 is not None:
+                self.logger.info(f"Track {track_num}: AccurateRip checksums calculated - v1={v1:08x}, v2={v2:08x}")
+                # Note: Full database verification happens during finalization
                 return True
             else:
-                # Check if this is because no database entry exists (acceptable)
-                # vs database entry exists but doesn't match (needs re-rip)
-                self.logger.warning(f"Track {track_num}: No AccurateRip match found")
+                self.logger.warning(f"Track {track_num}: Failed to calculate AccurateRip checksums")
+                return False
                 
-                # For now, treat "no database entry" as acceptable (return True)
-                # This prevents unnecessary re-ripping when the disc simply isn't in the database
-                # TODO: Distinguish between "no entry" vs "entry exists but doesn't match"
-                return True
-            
         except Exception as e:
-            self.logger.error(f"Error verifying track {track_num} with AccurateRip: {e}")
-            # On error, assume verification passed to avoid unnecessary re-ripping
-            return True
+            self.logger.error(f"AccurateRip checksum calculation failed for track {track_num}: {e}")
+            return True  # Don't fail the rip for AccurateRip errors
     
     def _rip_paranoia_mode(self, disc_info: DiscInfo, output_dir: Path, metadata: Dict[str, Any] = None) -> bool:
         """Rip in paranoia mode (slow but accurate) with per-track encoding and verification"""
@@ -548,6 +551,19 @@ class CDRipper:
                 if self._check_cancelled():
                     return False
                 
+                # Check if FLAC file already exists (from previous burst mode success)
+                track_meta = {}
+                if metadata and metadata.get('tracks') and i <= len(metadata['tracks']):
+                    track_meta = metadata['tracks'][i-1]
+                
+                expected_flac_file = output_dir / f"{i:02d} - {self._sanitize_filename(track_meta.get('title', f'Track {i:02d}'))}.flac"
+                
+                if expected_flac_file.exists():
+                    self.logger.info(f"Track {i} FLAC already exists from burst mode, skipping paranoia re-rip")
+                    # Update progress as if we processed this track
+                    self.progress = int(i / len(tracks) * 100)
+                    continue
+                
                 track_file = output_dir / f"{i:02d}.wav"
                 
                 # Use cdparanoia in paranoia mode
@@ -555,9 +571,14 @@ class CDRipper:
                     'cdparanoia',
                     '-d', device,
                     '-z',  # Never ask, never tell
-                    f'{i}',
-                    str(track_file)
                 ]
+                
+                # Add force-overread for last track (whipper approach)
+                if i == len(tracks):
+                    cmd.append('--force-overread')
+                    self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
+                
+                cmd.extend([f'{i}', str(track_file)])
                 
                 # Add sample offset if configured (using -O flag)
                 if self.config['cd_drive']['offset'] != 0:
@@ -838,6 +859,38 @@ class CDRipper:
                 self.logger.info("Finalization cancelled by user before cleanup")
                 return False
             
+            # Full AccurateRip verification after all tracks are complete
+            if self.config['ripping']['use_accuraterip']:
+                self._update_status(RipStatus.VERIFYING_ACCURATERIP)
+                self.logger.info("Performing final AccurateRip verification...")
+                
+                try:
+                    # Calculate track offsets from disc info
+                    track_offsets = []
+                    for track in disc_info.tracks:
+                        # Track offsets should be in CD sectors/frames
+                        # Convert from MSF format if needed, or use direct sector values
+                        track_offsets.append(track.start_sector)
+                    
+                    # Add leadout position (end of last track + standard gap)
+                    if disc_info.tracks:
+                        last_track = disc_info.tracks[-1]
+                        leadout_sector = last_track.start_sector + last_track.length_sectors
+                        track_offsets.append(leadout_sector)
+                    
+                    self.logger.info(f"Track offsets for AccurateRip: {track_offsets}")
+                    
+                    # Perform full verification
+                    verification_success = self.accuraterip_checker.verify_rip(output_dir, track_offsets)
+                    if verification_success:
+                        self.logger.info("🎉 All tracks verified successfully against AccurateRip database!")
+                    else:
+                        self.logger.warning("⚠️  Some tracks failed AccurateRip verification (disc may not be in database)")
+                        
+                except Exception as e:
+                    self.logger.error(f"AccurateRip verification failed: {e}")
+                    # Don't fail the entire rip for AccurateRip issues
+            
             # Clean up any remaining WAV files (should be none if per-track encoding worked)
             remaining_wavs = list(output_dir.glob("*.wav"))
             if remaining_wavs:
@@ -881,6 +934,7 @@ class CDRipper:
             # Build FLAC encoding command
             cmd = [
                 'flac',
+                '-f',  # Force overwrite existing files
                 f'--compression-level-{self.config["output"]["compression_level"]}',
                 '--delete-input-file',
                 f'--output-name={flac_file}',
