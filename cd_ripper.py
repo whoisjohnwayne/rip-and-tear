@@ -108,8 +108,9 @@ class CDRipper:
                 self._update_status(RipStatus.RIPPING_BURST)
                 burst_success = self._rip_burst_mode(disc_info, album_dir)
                 
-                # Check for cancellation
+                # Check for cancellation - if cancelled during burst mode, abort completely
                 if self._check_cancelled():
+                    self._update_status(RipStatus.IDLE, "Operation cancelled by user during burst mode")
                     return False
                 
                 if burst_success and self.config['ripping']['use_accuraterip']:
@@ -118,6 +119,7 @@ class CDRipper:
                     
                     # Check for cancellation
                     if self._check_cancelled():
+                        self._update_status(RipStatus.IDLE, "Operation cancelled by user during verification")
                         return False
                     
                     if not failed_tracks:
@@ -130,6 +132,10 @@ class CDRipper:
                         # Re-rip only the failed tracks in paranoia mode
                         self._update_status(RipStatus.RERIPPING_FAILED_TRACKS)
                         if self._rip_failed_tracks_paranoia(disc_info, album_dir, failed_tracks):
+                            # Check for cancellation after re-ripping
+                            if self._check_cancelled():
+                                self._update_status(RipStatus.IDLE, "Operation cancelled by user during re-ripping")
+                                return False
                             self.logger.info("Successfully re-ripped failed tracks in paranoia mode")
                             return self._finalize_rip(disc_info, metadata, album_dir)
                         else:
@@ -138,14 +144,26 @@ class CDRipper:
                 elif burst_success:
                     self.logger.info("Burst mode rip completed (AccurateRip verification disabled)")
                     return self._finalize_rip(disc_info, metadata, album_dir)
+                else:
+                    # Burst mode failed (not cancelled) - fall through to paranoia mode
+                    self.logger.warning("Burst mode failed, will try full paranoia mode")
             
-            # Fallback to full paranoia mode if burst mode failed completely
-            self._update_status(RipStatus.RIPPING_PARANOIA)
-            self.logger.info("Burst mode failed, using full paranoia mode for all tracks")
-            if self._rip_paranoia_mode(disc_info, album_dir):
-                return self._finalize_rip(disc_info, metadata, album_dir)
+            # Fallback to full paranoia mode if burst mode failed completely (not if cancelled)
+            if not self._check_cancelled():  # Only proceed to paranoia if not cancelled
+                self._update_status(RipStatus.RIPPING_PARANOIA)
+                self.logger.info("Using full paranoia mode for all tracks")
+                if self._rip_paranoia_mode(disc_info, album_dir):
+                    # Check for cancellation after paranoia mode
+                    if self._check_cancelled():
+                        self._update_status(RipStatus.IDLE, "Operation cancelled by user during paranoia mode")
+                        return False
+                    return self._finalize_rip(disc_info, metadata, album_dir)
+                else:
+                    self._update_status(RipStatus.ERROR, "Paranoia mode ripping failed")
+                    return False
             else:
-                self._update_status(RipStatus.ERROR, "Both burst and paranoia mode ripping failed")
+                # Cancelled before paranoia mode could start
+                self._update_status(RipStatus.IDLE, "Operation cancelled by user")
                 return False
                 
         except Exception as e:
@@ -180,23 +198,41 @@ class CDRipper:
             return None
     
     def _parse_toc_output(self, toc_output: str) -> Dict[str, Any]:
-        """Parse cdparanoia TOC output"""
+        """Parse cdparanoia TOC output with robust error handling"""
         tracks = []
         lines = toc_output.strip().split('\n')
         
         for line in lines:
             line = line.strip()
             if line.startswith('track'):
-                # Parse track line: "track 01.  audio    00:32.17    760 [00:02.17]"
-                parts = line.split()
-                if len(parts) >= 4 and parts[2] == 'audio':
-                    track_num = int(parts[1].rstrip('.'))
-                    duration = parts[3]
-                    tracks.append({
-                        'number': track_num,
-                        'duration': duration,
-                        'type': 'audio'
-                    })
+                try:
+                    # Parse track line: "track 01.  audio    00:32.17    760 [00:02.17]"
+                    parts = line.split()
+                    if len(parts) >= 4 and parts[2] == 'audio':
+                        # Validate track number
+                        track_str = parts[1].rstrip('.')
+                        if not track_str.isdigit():
+                            self.logger.warning(f"Invalid track number in TOC line: {line}")
+                            continue
+                        track_num = int(track_str)
+                        
+                        # Validate duration format
+                        duration = parts[3]
+                        if ':' not in duration:
+                            self.logger.warning(f"Invalid duration format in TOC line: {line}")
+                            continue
+                        
+                        tracks.append({
+                            'number': track_num,
+                            'duration': duration,
+                            'type': 'audio'
+                        })
+                except (ValueError, IndexError) as e:
+                    self.logger.warning(f"Failed to parse TOC line '{line}': {e}")
+                    continue
+        
+        if not tracks:
+            self.logger.warning("No valid tracks found in TOC output")
         
         return {
             'tracks': tracks,
@@ -330,6 +366,10 @@ class CDRipper:
                 self.current_track = i
                 self.progress = int((i - 1) / len(tracks) * 100)
                 
+                # Check for cancellation before each track
+                if self._check_cancelled():
+                    return False
+                
                 track_file = output_dir / f"{i:02d}.wav"
                 
                 # Use cdparanoia in paranoia mode
@@ -345,7 +385,11 @@ class CDRipper:
                 if self.config['cd_drive']['offset'] != 0:
                     cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                result = self._run_cancellable_subprocess(cmd, timeout=1800)
+                
+                # Check for cancellation after ripping each track
+                if self._check_cancelled():
+                    return False
                 
                 if result.returncode != 0:
                     self.logger.error(f"Failed to rip track {i}: {result.stderr}")
@@ -486,6 +530,10 @@ class CDRipper:
                     self.logger.error(f"Invalid track number: {track_num}")
                     continue
                 
+                # Check for cancellation before each track
+                if self._check_cancelled():
+                    return False
+                
                 self.current_track = track_num
                 # Update progress based on failed tracks
                 progress_index = failed_tracks.index(track_num)
@@ -512,7 +560,11 @@ class CDRipper:
                     cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
                 self.logger.info(f"Re-ripping track {track_num} in paranoia mode...")
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                result = self._run_cancellable_subprocess(cmd, timeout=1800)
+                
+                # Check for cancellation after each track
+                if self._check_cancelled():
+                    return False
                 
                 if result.returncode != 0:
                     self.logger.error(f"Failed to re-rip track {track_num}: {result.stderr}")

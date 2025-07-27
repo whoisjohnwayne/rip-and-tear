@@ -108,27 +108,40 @@ class CueGenerator:
         return f"{minutes:02d}:{seconds:02d}:{frames:02d}"
     
     def _add_time(self, time1: str, duration: str) -> str:
-        """Add duration to time (simplified implementation)"""
+        """Add duration to time with robust error handling"""
         try:
-            # Parse time1 (MM:SS:FF format)
+            # Parse time1 (MM:SS:FF format) with validation
             t1_parts = time1.split(':')
-            minutes1 = int(t1_parts[0])
-            seconds1 = int(t1_parts[1])
-            frames1 = int(t1_parts[2]) if len(t1_parts) > 2 else 0
+            if len(t1_parts) < 2:
+                self.logger.warning(f"Invalid time1 format: {time1}, using 00:00:00")
+                minutes1, seconds1, frames1 = 0, 0, 0
+            else:
+                minutes1 = max(0, int(t1_parts[0]) if t1_parts[0].isdigit() else 0)
+                seconds1 = max(0, int(t1_parts[1]) if t1_parts[1].isdigit() else 0)
+                frames1 = max(0, int(t1_parts[2]) if len(t1_parts) > 2 and t1_parts[2].isdigit() else 0)
             
-            # Parse duration (MM:SS.FF format)
+            # Parse duration with robust handling
             if '.' in duration:
+                # MM:SS.FF format
                 duration_parts = duration.split(':')
-                minutes2 = int(duration_parts[0])
-                sec_frame = duration_parts[1].split('.')
-                seconds2 = int(sec_frame[0])
-                frames2 = int(sec_frame[1]) if len(sec_frame) > 1 else 0
+                if len(duration_parts) < 2:
+                    self.logger.warning(f"Invalid duration format: {duration}, using 00:00")
+                    minutes2, seconds2, frames2 = 0, 0, 0
+                else:
+                    minutes2 = max(0, int(duration_parts[0]) if duration_parts[0].isdigit() else 0)
+                    sec_frame = duration_parts[1].split('.')
+                    seconds2 = max(0, int(sec_frame[0]) if sec_frame[0].isdigit() else 0)
+                    frames2 = max(0, int(sec_frame[1]) if len(sec_frame) > 1 and sec_frame[1].isdigit() else 0)
             else:
                 # Simple MM:SS format
                 duration_parts = duration.split(':')
-                minutes2 = int(duration_parts[0])
-                seconds2 = int(duration_parts[1])
-                frames2 = 0
+                if len(duration_parts) < 2:
+                    self.logger.warning(f"Invalid duration format: {duration}, using 00:00")
+                    minutes2, seconds2, frames2 = 0, 0, 0
+                else:
+                    minutes2 = max(0, int(duration_parts[0]) if duration_parts[0].isdigit() else 0)
+                    seconds2 = max(0, int(duration_parts[1]) if duration_parts[1].isdigit() else 0)
+                    frames2 = 0
             
             # Add times (75 frames per second for CD audio)
             total_frames = frames1 + frames2
@@ -137,6 +150,12 @@ class CueGenerator:
             
             result_frames = total_frames % 75
             result_seconds = total_seconds % 60
+            
+            return f"{total_minutes:02d}:{result_seconds:02d}:{result_frames:02d}"
+            
+        except Exception as e:
+            self.logger.warning(f"Time calculation failed: {e}")
+            return "00:00:00"
             
             return f"{total_minutes:02d}:{result_seconds:02d}:{result_frames:02d}"
             

@@ -24,15 +24,21 @@ class MetadataFetcher:
             self.logger.warning("MusicBrainz package not available - metadata fetching disabled")
             return
         
-        # Configure MusicBrainz
-        mb.set_useragent(
-            config['metadata']['user_agent'],
-            "1.0",
-            config['metadata']['contact_email']
-        )
+        # Set up MusicBrainz user agent as required by their API
+        mb.set_useragent("Rip-and-Tear", "1.0", "https://github.com/user/rip-and-tear")
         
-        if config['metadata']['musicbrainz_server'] != 'musicbrainz.org':
-            mb.set_hostname(config['metadata']['musicbrainz_server'])
+        # Configure MusicBrainz if additional settings are provided
+        if 'metadata' in config:
+            metadata_config = config['metadata']
+            if 'user_agent' in metadata_config:
+                mb.set_useragent(
+                    metadata_config['user_agent'],
+                    "1.0",
+                    metadata_config.get('contact_email', "contact@example.com")
+                )
+            
+            if metadata_config.get('musicbrainz_server', 'musicbrainz.org') != 'musicbrainz.org':
+                mb.set_hostname(metadata_config['musicbrainz_server'])
     
     def _safe_get(self, data, *keys, default=None):
         """Safely navigate nested dictionary structure"""
@@ -58,11 +64,12 @@ class MetadataFetcher:
     def get_metadata(self, toc_info: Dict[str, Any]) -> Dict[str, Any]:
         """Get metadata for the CD with robust error handling"""
         # Check if automatic metadata fetching is disabled
-        if not self.config['metadata'].get('auto_fetch', True):
+        metadata_config = self.config.get('metadata', {})
+        if not metadata_config.get('auto_fetch', True):
             self.logger.info("Automatic metadata fetching disabled - using default track names for AccurateRip accuracy")
             return self._get_default_metadata(toc_info)
             
-        if not self.config['metadata']['use_musicbrainz'] or not MUSICBRAINZ_AVAILABLE:
+        if not metadata_config.get('use_musicbrainz', True) or not MUSICBRAINZ_AVAILABLE:
             return self._get_default_metadata(toc_info)
         
         try:
@@ -101,31 +108,52 @@ class MetadataFetcher:
         return None
     
     def _search_by_disc_id(self, disc_id: str) -> Optional[Dict[str, Any]]:
-        """Search MusicBrainz by disc ID"""
+        """Search MusicBrainz by disc ID using the proper disc ID lookup"""
         try:
             self.logger.info(f"Searching MusicBrainz for disc ID: {disc_id}")
             
-            # Try to search using the actual disc ID as a query
-            # Note: For proper MusicBrainz disc ID lookup, we'd need libdiscid
-            # This is a simplified approach
-            
-            # Try searching by the disc ID hash
-            query = f'discid:{disc_id}'
-            result = mb.search_releases(
-                query=query,
-                limit=5,
-                format='json'
+            # Use the proper MusicBrainz disc ID lookup method
+            result = mb.get_releases_by_discid(
+                id=disc_id,
+                includes=['artist-credits', 'recordings'],
+                cdstubs=True
             )
             
-            release_list = result.get('release-list', []) if isinstance(result, dict) else []
-            if release_list:
-                self.logger.info(f"Found {len(release_list)} potential matches for disc ID {disc_id}")
-                # Use the first exact match
-                release = release_list[0]
-                if isinstance(release, dict):
-                    return self._parse_musicbrainz_release(release, 0)  # Track count will be determined from MB data
+            # Check for direct disc match
+            if 'disc' in result:
+                disc_data = result['disc']
+                release_list = disc_data.get('release-list', [])
+                if release_list:
+                    self.logger.info(f"Found {len(release_list)} releases for disc ID {disc_id}")
+                    # Use the first release
+                    release = release_list[0]
+                    if isinstance(release, dict):
+                        return self._parse_musicbrainz_release(release, 0)  # Track count will be determined from MB data
             
-            self.logger.info(f"No exact disc ID match found for {disc_id}")
+            # Check for fuzzy match results
+            if 'release-list' in result:
+                release_list = result['release-list']
+                if release_list:
+                    self.logger.info(f"Found {len(release_list)} fuzzy matches for disc ID {disc_id}")
+                    # Use the first fuzzy match
+                    release = release_list[0]
+                    if isinstance(release, dict):
+                        return self._parse_musicbrainz_release(release, 0)  # Track count will be determined from MB data
+            
+            # Check for CD stub match
+            if 'cdstub' in result:
+                cdstub = result['cdstub']
+                self.logger.info(f"Found CD stub for disc ID {disc_id}: {cdstub.get('title', 'Unknown')}")
+                # Convert CD stub to release format for compatibility
+                stub_release = {
+                    'title': cdstub.get('title', 'Unknown Album'),
+                    'artist-credit': [{'name': cdstub.get('artist', 'Unknown Artist')}],
+                    'id': f"cdstub-{disc_id}",
+                    'status': 'CD Stub'
+                }
+                return self._parse_musicbrainz_release(stub_release, 0)
+            
+            self.logger.info(f"No matches found for disc ID: {disc_id}")
             return None
             
         except Exception as e:
@@ -222,12 +250,35 @@ class MetadataFetcher:
                             artist_credit = track_artist_credit if track_artist_credit else recording_artist_credit
                             track_artist = self._get_artist_name(artist_credit)
                             
-                            # Safe length extraction
+                            # Safe length extraction with validation
                             track_length = track.get('length') or recording.get('length')
+                            if track_length and isinstance(track_length, (str, int)):
+                                try:
+                                    # Ensure length is numeric (milliseconds)
+                                    if isinstance(track_length, str):
+                                        if track_length.isdigit():
+                                            track_length = int(track_length)
+                                        else:
+                                            track_length = None
+                                    elif isinstance(track_length, int) and track_length < 0:
+                                        track_length = None
+                                except (ValueError, TypeError):
+                                    track_length = None
                             
-                            # Safe position extraction
+                            # Safe position extraction with validation
                             position = track.get('position')
-                            if not isinstance(position, int):
+                            if position is not None:
+                                try:
+                                    if isinstance(position, str):
+                                        if position.isdigit():
+                                            position = int(position)
+                                        else:
+                                            position = len(metadata['tracks']) + 1
+                                    elif not isinstance(position, int) or position <= 0:
+                                        position = len(metadata['tracks']) + 1
+                                except (ValueError, TypeError):
+                                    position = len(metadata['tracks']) + 1
+                            else:
                                 position = len(metadata['tracks']) + 1
                             
                             track_info = {
@@ -280,7 +331,12 @@ class MetadataFetcher:
                 first_credit = artist_credit[0]
                 if isinstance(first_credit, dict):
                     
-                    # Try artist.name (most common structure)
+                    # Try direct name field first (most common in artist-credit)
+                    direct_name = self._safe_get_string(first_credit, 'name')
+                    if direct_name and direct_name != '':
+                        return direct_name
+                    
+                    # Try artist.name (nested structure)
                     artist_name = self._safe_get_string(first_credit, 'artist', 'name')
                     if artist_name and artist_name != '':
                         return artist_name
@@ -289,11 +345,6 @@ class MetadataFetcher:
                     artist_sort_name = self._safe_get_string(first_credit, 'artist', 'sort-name')
                     if artist_sort_name and artist_sort_name != '':
                         return artist_sort_name
-                    
-                    # Try direct name field
-                    direct_name = self._safe_get_string(first_credit, 'name')
-                    if direct_name and direct_name != '':
-                        return direct_name
                     
                     # Try credited-as name (for aliased credits)
                     credited_as = self._safe_get_string(first_credit, 'credited-as')
@@ -343,10 +394,22 @@ class MetadataFetcher:
                 if date_value and date_value.strip():
                     # Extract year from date (handle various formats)
                     try:
-                        # Handle YYYY, YYYY-MM, YYYY-MM-DD formats
-                        year = date_value.split('-')[0]
-                        if year.isdigit() and len(year) == 4:
-                            return year
+                        # Handle YYYY, YYYY-MM, YYYY-MM-DD, and partial dates
+                        date_clean = date_value.strip()
+                        
+                        # Remove common prefixes/suffixes
+                        for prefix in ['ca. ', 'c. ', '~', 'circa ', 'about ']:
+                            if date_clean.lower().startswith(prefix):
+                                date_clean = date_clean[len(prefix):].strip()
+                        
+                        # Extract year part
+                        year_part = date_clean.split('-')[0].split('/')[0].split('.')[0]
+                        
+                        # Validate year format (4 digits, reasonable range)
+                        if year_part.isdigit() and len(year_part) == 4:
+                            year_int = int(year_part)
+                            if 1900 <= year_int <= 2030:  # Reasonable CD release range
+                                return year_part
                     except (ValueError, IndexError):
                         continue
             

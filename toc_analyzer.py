@@ -320,7 +320,7 @@ class TOCAnalyzer:
         return None
     
     def _read_cd_text(self) -> Optional[Dict[str, str]]:
-        """Read CD-Text information if available"""
+        """Read CD-Text information if available with robust parsing"""
         try:
             result = subprocess.run([
                 'cdrdao', 'read-cd', '--device', self.device, 
@@ -328,17 +328,30 @@ class TOCAnalyzer:
             ], capture_output=True, text=True, timeout=60)
             
             if result.returncode == 0:
-                # Parse CD-Text from output
+                # Parse CD-Text from output with robust error handling
                 cd_text_info = {}
                 lines = result.stderr.split('\n')
                 
                 for line in lines:
+                    line = line.strip()
                     if 'CD_TEXT' in line:
-                        # Extract CD-Text information
-                        if 'TITLE' in line:
-                            cd_text_info['title'] = line.split('TITLE')[1].strip()
-                        elif 'PERFORMER' in line:
-                            cd_text_info['performer'] = line.split('PERFORMER')[1].strip()
+                        try:
+                            # Extract CD-Text information with proper validation
+                            if 'TITLE' in line and 'TITLE' in line.upper():
+                                title_parts = line.split('TITLE', 1)
+                                if len(title_parts) > 1:
+                                    title = title_parts[1].strip().strip('"\'')
+                                    if title:
+                                        cd_text_info['title'] = title
+                            elif 'PERFORMER' in line and 'PERFORMER' in line.upper():
+                                performer_parts = line.split('PERFORMER', 1)
+                                if len(performer_parts) > 1:
+                                    performer = performer_parts[1].strip().strip('"\'')
+                                    if performer:
+                                        cd_text_info['performer'] = performer
+                        except (IndexError, AttributeError) as e:
+                            self.logger.debug(f"Failed to parse CD-Text line '{line}': {e}")
+                            continue
                 
                 return cd_text_info if cd_text_info else None
                 
