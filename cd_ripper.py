@@ -67,21 +67,25 @@ class CDRipper:
             
             # Check for cancellation
             if self._check_cancelled():
+                self._eject_cd()
                 return False
             
             # Get comprehensive CD information with gap detection
             disc_info = self.toc_analyzer.analyze_disc()
             if not disc_info:
                 self._update_status(RipStatus.ERROR, "Failed to analyze CD structure")
+                self._eject_cd()
                 return False
             
             # Check for cancellation
             if self._check_cancelled():
+                self._eject_cd()
                 return False
             
             # Validate that we have tracks
             if not hasattr(disc_info, 'tracks') or not disc_info.tracks:
                 self._update_status(RipStatus.ERROR, "No tracks found on CD - disc may be damaged or unreadable")
+                self._eject_cd()
                 return False
             
             self.total_tracks = len(disc_info.tracks)
@@ -92,6 +96,7 @@ class CDRipper:
             
             # Check for cancellation
             if self._check_cancelled():
+                self._eject_cd()
                 return False
                 
             metadata = self.metadata_fetcher.get_metadata(disc_info.to_dict())
@@ -106,23 +111,28 @@ class CDRipper:
             if self.config['ripping']['try_burst_first']:
                 # Check for cancellation
                 if self._check_cancelled():
+                    self._eject_cd()
                     return False
-                    
                 self._update_status(RipStatus.RIPPING_BURST)
                 burst_success = self._rip_burst_mode(disc_info, album_dir, metadata)
                 
                 # Check for cancellation - if cancelled during burst mode, abort completely
                 if self._check_cancelled():
                     self._update_status(RipStatus.IDLE, "Operation cancelled by user during burst mode")
+                    self._eject_cd()
                     return False
                 
                 if burst_success and self.config['ripping']['use_accuraterip']:
                     # AccurateRip verification was already done per-track during burst mode
                     self.logger.info("Per-track AccurateRip verification completed during burst mode")
-                    return self._finalize_rip(disc_info, metadata, album_dir, skip_encoding=True)
+                    result = self._finalize_rip(disc_info, metadata, album_dir, skip_encoding=True)
+                    self._eject_cd()
+                    return result
                 elif burst_success:
                     self.logger.info("Burst mode rip completed (AccurateRip verification disabled)")
-                    return self._finalize_rip(disc_info, metadata, album_dir, skip_encoding=True)
+                    result = self._finalize_rip(disc_info, metadata, album_dir, skip_encoding=True)
+                    self._eject_cd()
+                    return result
                 else:
                     # Burst mode failed (not cancelled) - fall through to paranoia mode
                     self.logger.warning("Burst mode failed, will try full paranoia mode")
@@ -135,20 +145,34 @@ class CDRipper:
                     # Check for cancellation after paranoia mode
                     if self._check_cancelled():
                         self._update_status(RipStatus.IDLE, "Operation cancelled by user during paranoia mode")
+                        self._eject_cd()
                         return False
-                    return self._finalize_rip(disc_info, metadata, album_dir, skip_encoding=True)
+                    result = self._finalize_rip(disc_info, metadata, album_dir, skip_encoding=True)
+                    self._eject_cd()
+                    return result
                 else:
                     self._update_status(RipStatus.ERROR, "Paranoia mode ripping failed")
+                    self._eject_cd()
                     return False
             else:
                 # Cancelled before paranoia mode could start
                 self._update_status(RipStatus.IDLE, "Operation cancelled by user")
+                self._eject_cd()
                 return False
                 
         except Exception as e:
             self.logger.error(f"CD ripping failed: {e}")
             self._update_status(RipStatus.ERROR, str(e))
+            self._eject_cd()
             return False
+    def _eject_cd(self):
+        """Eject the CD using the system eject command"""
+        device = self.config['cd_drive']['device']
+        try:
+            subprocess.run(['eject', device], check=False)
+            self.logger.info(f"Ejected CD from {device}")
+        except Exception as e:
+            self.logger.warning(f"Failed to eject CD: {e}")
     
     def _get_cd_toc(self) -> Optional[Dict[str, Any]]:
         """Get CD table of contents"""
@@ -395,10 +419,11 @@ class CDRipper:
                     # Special handling for last track errors - cd-paranoia often has issues with lead-out detection
                     if i == len(tracks):
                         error_msg = result.stderr.lower()
+                        self.logger.error(f"Last track ({i}) burst rip failed. Command: {' '.join(track_cmd)}")
+                        self.logger.error(f"Last track ({i}) error output: {result.stderr}")
                         if any(term in error_msg for term in ['last_track', 'lead-out', 'leadout', 'end of disc', 'overread']):
-                            self.logger.warning(f"Last track rip failed with lead-out detection issue: {result.stderr}")
+                            self.logger.warning(f"Last track rip failed with lead-out/overread/leadout detection issue.")
                             self.logger.info("Attempting last track recovery with alternative settings...")
-                            
                             # Try alternative command for problematic last tracks
                             recovery_cmd = [
                                 'cd-paranoia',
@@ -409,22 +434,21 @@ class CDRipper:
                                 '-n', '1',  # Single retry
                                 f'{i}', str(track_file)
                             ]
-                            
                             if self.config['cd_drive']['offset'] != 0:
                                 recovery_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                            
-                            self.logger.info(f"Recovery command: {' '.join(recovery_cmd)}")
+                            self.logger.info(f"Last track recovery command: {' '.join(recovery_cmd)}")
                             recovery_result = self._run_cancellable_subprocess(recovery_cmd, timeout=900)
-                            
                             if recovery_result.returncode == 0:
                                 self.logger.info("Last track recovery successful!")
                                 result = recovery_result  # Use the successful result
                             else:
+                                self.logger.error(f"Last track recovery failed. Command: {' '.join(recovery_cmd)}")
+                                self.logger.error(f"Last track recovery error output: {recovery_result.stderr}")
                                 self.logger.warning("Last track recovery failed, will rely on paranoia mode fallback")
                                 last_track_failed = True
                                 break
                         else:
-                            self.logger.error(f"Failed to rip track {i}: {result.stderr}")
+                            self.logger.error(f"Failed to rip last track {i} (not a lead-out/overread error): {result.stderr}")
                             return False
                     else:
                         self.logger.error(f"Failed to rip track {i}: {result.stderr}")
