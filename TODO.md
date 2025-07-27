@@ -1,4 +1,25 @@
-# 🎯 TODO: Rip and Tear - Remaining Issues & Improvements
+# 🎯 TODO: Rip and Tear - Rema### 4. **UI Can### 5. **### 5. **UI Cancel/Stop Functionality**
+- **Issue**: No way to cancel a ripping operation that's stuck or taking too long
+- **Priority**: High (safety feature)
+- **Status**: ✅ **WORKING** - Tested and confirmed functional
+- **Details**: Cancel button successfully stops ripping operations and terminates backend processes
+
+## 🔧 **Performance & Stability Issues**
+
+### 6. **Timeout Configuration**onfiguration**
+- **Current**: FLAC encoding has 300-second timeout per track
+- **Issue**: Might be insufficient for large/complex tracks
+- **Improvement**: Make timeouts configurable, add retry logic
+
+### 6. **Error Recovery**op Functionality**
+- **Issue**: No way to cancel a ripping operation that's stuck or taking too long
+- **Priority**: High (safety feature)
+- **Status**: ✅ Implemented (needs testing)
+- **Details**: Cancel button added to UI with backend process termination support
+
+## 🔧 **Performance & Stability Issues**
+
+### 5. **Timeout Configuration**sues & Improvements
 
 ## 🚨 **Critical Issues (High Priority)**
 
@@ -17,10 +38,33 @@
 - **Status**: 🟡 Fixes deployed, awaiting testing results
 - **Next Steps**: Validate that 6-track disc shows correct track count (not 18)
 
-### 3. **UI Cancel/Stop Functionality**
+### 3. **AccurateRip Algorithm Implementation**
+- **Issue**: Currently using simplified AccurateRip v1 implementation
+- **Missing Features**:
+  - Proper v1 algorithm (ignores first 2939 samples of track 1, last 2940 samples of last track)
+  - AccurateRip v2 algorithm (fixes optimization oversight bug, better accuracy)
+  - Track boundary handling according to AccurateRip specifications
+  - Support for both v1 and v2 database lookups for maximum verification coverage
+- **Impact**: Limited verification accuracy and database hit rate
+- **Priority**: Medium (affects verification quality)
+- **Status**: 🟡 Basic implementation working, needs proper algorithms
+
+### 4. **MusicBrainz Disc ID Implementation**
+- **Issue**: Not using proper MusicBrainz disc ID calculation
+- **Current**: Using cd-discid command + manual calculation
+- **Needed**: 
+  - Add python-discid package for proper MusicBrainz disc IDs
+  - Use libdiscid for accurate SHA-1 based disc identification
+  - Separate MusicBrainz disc IDs from AccurateRip disc IDs (different purposes)
+- **Impact**: Less accurate metadata matching
+- **Priority**: Medium (affects metadata accuracy)
+- **Status**: 🟡 Added dependencies, needs implementation
+
+### 5. **UI Cancel/Stop Functionality**
 - **Issue**: No way to cancel a ripping operation that's stuck or taking too long
 - **Priority**: High (safety feature)
-- **Status**: 🔴 Not implemented
+- **Status**: ✅ **WORKING** - Tested and confirmed functional
+- **Details**: Cancel button successfully stops ripping operations and terminates backend processes
 
 ## 🔧 **Performance & Stability Issues**
 
@@ -84,10 +128,12 @@
 
 ### ✅ **Completed**
 - Comprehensive MusicBrainz field handling (no more AttributeError exceptions)
-- Fixed AccurateRip disc ID calculation algorithms
-- Improved TOC parsing accuracy and validation
+- Fixed AccurateRip disc ID calculation algorithms (correct FreeDB format)
+- Improved TOC parsing accuracy and validation (eliminated duplicate tracks)
 - Enhanced error handling throughout application
 - Docker deployment and CI/CD pipeline
+- UI cancel functionality with backend process termination
+- Duplicate track filtering and detection
 
 ### 🟡 **In Progress**
 - Validating TOC parsing fixes (18 vs 6 track issue)
@@ -95,15 +141,14 @@
 
 ### 🔴 **Blocked/Critical**
 - Ripping process hanging (needs debugging)
-- UI cancel functionality (safety requirement)
 
 ## 🎯 **Next Sprint Priorities**
 
-1. **Implement UI Cancel Button** (safety critical)
-2. **Debug and fix hanging issues** (stability critical)
-3. **Validate AccurateRip fixes** (accuracy critical)
-4. **Add comprehensive timeout handling** (reliability)
-5. **Implement better error recovery** (user experience)
+1. **Debug and fix hanging issues** (stability critical)
+2. **Validate AccurateRip fixes** (accuracy critical) 
+3. **Implement proper MusicBrainz disc ID with python-discid** (metadata accuracy)
+4. **Implement proper AccurateRip v1/v2 algorithms** (verification quality)
+5. **Add comprehensive timeout handling** (reliability)
 
 ---
 
