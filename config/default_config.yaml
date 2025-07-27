@@ -44,6 +44,14 @@ web_gui:
   port: 8080
   debug: false
 
+# Last track specific settings (handles problematic end-of-disc issues)
+last_track:
+  retries: 1  # Number of retries for last track
+  paranoia: "minimal"  # Paranoia level: "minimal", "standard", "full"
+  leadout_detection: false  # Enable lead-out detection (can cause issues)
+  force_overread: true  # Force reading into lead-out area (whipper approach)
+  timeout: 900  # Extended timeout for last track (15 minutes)
+
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   max_log_files: 10

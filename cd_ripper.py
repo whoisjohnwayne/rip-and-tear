@@ -99,6 +99,9 @@ class CDRipper:
             # Create output directory for this album
             album_dir = self._create_album_directory(metadata)
             
+            # Diagnose potential last track issues before starting
+            self._diagnose_last_track_issue(disc_info)
+            
             # Try burst mode rip first
             if self.config['ripping']['try_burst_first']:
                 # Check for cancellation
@@ -269,6 +272,38 @@ class CDRipper:
         filename = ' '.join(filename.split())
         return filename.strip()
     
+    def _diagnose_last_track_issue(self, disc_info: DiscInfo) -> None:
+        """Diagnose potential last track issues and log helpful information"""
+        if not disc_info.tracks:
+            return
+            
+        last_track = disc_info.tracks[-1]
+        total_tracks = len(disc_info.tracks)
+        
+        self.logger.info("=== Last Track Diagnostic Information ===")
+        self.logger.info(f"Total tracks on disc: {total_tracks}")
+        self.logger.info(f"Last track number: {total_tracks}")
+        self.logger.info(f"Last track length: {last_track.length_seconds:.2f} seconds")
+        self.logger.info(f"Last track start sector: {last_track.start_sector}")
+        self.logger.info(f"Last track length sectors: {last_track.length_sectors}")
+        
+        # Calculate estimated lead-out position
+        leadout_sector = last_track.start_sector + last_track.length_sectors
+        self.logger.info(f"Estimated lead-out sector: {leadout_sector}")
+        
+        # Check for problematic configurations
+        if last_track.length_seconds < 4.0:
+            self.logger.warning(f"Last track is very short ({last_track.length_seconds:.2f}s) - may cause lead-out issues")
+        
+        if total_tracks >= 99:
+            self.logger.warning("Disc has 99 tracks - known cdparanoia issue (see whipper issue #302)")
+            
+        drive_offset = self.config['cd_drive']['offset']
+        if abs(drive_offset) > 587:
+            self.logger.warning(f"Large drive offset ({drive_offset}) may cause issues with last track")
+            
+        self.logger.info("=== End Diagnostic Information ===")
+
     def _rip_burst_mode(self, disc_info: DiscInfo, output_dir: Path, metadata: Dict[str, Any] = None) -> bool:
         """Rip in burst mode (fast) with immediate per-track encoding"""
         device = self.config['cd_drive']['device']
@@ -359,12 +394,39 @@ class CDRipper:
                 
                 if result.returncode != 0:
                     # Special handling for last track errors - cdparanoia often has issues with lead-out detection
-                    if i == len(tracks) and "last_track" in result.stderr.lower():
-                        self.logger.warning(f"Last track rip failed with lead-out detection issue: {result.stderr}")
-                        self.logger.info("Will attempt to continue and fall back to paranoia mode for last track only")
-                        # Don't return False here - let the method continue to paranoia fallback
-                        last_track_failed = True
-                        break
+                    if i == len(tracks):
+                        error_msg = result.stderr.lower()
+                        if any(term in error_msg for term in ['last_track', 'lead-out', 'leadout', 'end of disc', 'overread']):
+                            self.logger.warning(f"Last track rip failed with lead-out detection issue: {result.stderr}")
+                            self.logger.info("Attempting last track recovery with alternative settings...")
+                            
+                            # Try alternative command for problematic last tracks
+                            recovery_cmd = [
+                                'cdparanoia',
+                                '-d', device,
+                                '-z',  # Never ask, never tell
+                                '-Y',  # Most lenient paranoia mode
+                                '--force-overread',  # Force reading into lead-out
+                                '-n', '1',  # Single retry
+                                f'{i}', str(track_file)
+                            ]
+                            
+                            if self.config['cd_drive']['offset'] != 0:
+                                recovery_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
+                            
+                            self.logger.info(f"Recovery command: {' '.join(recovery_cmd)}")
+                            recovery_result = self._run_cancellable_subprocess(recovery_cmd, timeout=900)
+                            
+                            if recovery_result.returncode == 0:
+                                self.logger.info("Last track recovery successful!")
+                                result = recovery_result  # Use the successful result
+                            else:
+                                self.logger.warning("Last track recovery failed, will rely on paranoia mode fallback")
+                                last_track_failed = True
+                                break
+                        else:
+                            self.logger.error(f"Failed to rip track {i}: {result.stderr}")
+                            return False
                     else:
                         self.logger.error(f"Failed to rip track {i}: {result.stderr}")
                         return False
@@ -573,10 +635,16 @@ class CDRipper:
                     '-z',  # Never ask, never tell
                 ]
                 
-                # Add force-overread for last track (whipper approach)
+                # Special handling for last track in paranoia mode
                 if i == len(tracks):
-                    cmd.append('--force-overread')
-                    self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
+                    force_overread = self.config.get('last_track', {}).get('force_overread', True)
+                    if force_overread:
+                        cmd.append('--force-overread')
+                        self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
+                    
+                    # Use minimal paranoia for last track to avoid lead-out issues
+                    cmd.append('-Y')  # Most lenient paranoia mode
+                    self.logger.info(f"Using minimal paranoia mode for last track {i}")
                 
                 cmd.extend([f'{i}', str(track_file)])
                 
@@ -584,17 +652,56 @@ class CDRipper:
                 if self.config['cd_drive']['offset'] != 0:
                     cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 
+                # Use extended timeout for last track
+                timeout = 1800
+                if i == len(tracks):
+                    timeout = self.config.get('last_track', {}).get('timeout', 900)
+                    self.logger.info(f"Using extended timeout {timeout}s for last track {i}")
+                
                 self.logger.info(f"Ripping track {i} in paranoia mode...")
                 self.progress = base_progress
-                result = self._run_cancellable_subprocess(cmd, timeout=1800)
+                result = self._run_cancellable_subprocess(cmd, timeout=timeout)
                 
                 # Check for cancellation after ripping each track
                 if self._check_cancelled():
                     return False
                 
                 if result.returncode != 0:
-                    self.logger.error(f"Failed to rip track {i}: {result.stderr}")
-                    return False
+                    # Special last track handling in paranoia mode
+                    if i == len(tracks):
+                        self.logger.warning(f"Last track failed in paranoia mode: {result.stderr}")
+                        
+                        # Try one final desperate attempt with absolute minimal settings
+                        if '--force-overread' not in cmd:
+                            self.logger.info("Attempting final recovery with emergency settings...")
+                            emergency_cmd = [
+                                'cdparanoia',
+                                '-d', device,
+                                '-z',  # Never ask, never tell
+                                '-Y',  # Most lenient
+                                '--force-overread',
+                                '-n', '1',  # Single attempt
+                                f'{i}', str(track_file)
+                            ]
+                            
+                            if self.config['cd_drive']['offset'] != 0:
+                                emergency_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
+                            
+                            emergency_result = self._run_cancellable_subprocess(emergency_cmd, timeout=1200)
+                            
+                            if emergency_result.returncode == 0:
+                                self.logger.info("Emergency last track recovery successful!")
+                                result = emergency_result
+                            else:
+                                self.logger.error(f"All last track recovery attempts failed. Track {i} could not be ripped.")
+                                self.logger.error("This may be due to lead-out detection issues or disc damage.")
+                                return False
+                        else:
+                            self.logger.error(f"Final last track attempt failed: {result.stderr}")
+                            return False
+                    else:
+                        self.logger.error(f"Failed to rip track {i}: {result.stderr}")
+                        return False
                 
                 self.logger.info(f"Ripped track {i} in paranoia mode, now encoding to FLAC...")
                 
