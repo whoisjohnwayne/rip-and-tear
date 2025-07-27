@@ -155,9 +155,9 @@ class CDRipper:
         device = self.config['cd_drive']['device']
         
         try:
-            # Use cdparanoia to get TOC
+            # Use cd-paranoia (libcdio-paranoia) to get TOC
             result = subprocess.run(
-                ['cdparanoia', '-Q', '-d', device],
+                ['cd-paranoia', '-Q', '-d', device],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -320,7 +320,7 @@ class CDRipper:
                 
                 # Enhanced ripping with gap handling
                 cmd = [
-                    'cdparanoia',
+                    'cd-paranoia',
                     '-d', device,
                     '-Z',  # Disable all paranoia checks for speed (burst mode)
                     '-z',  # Never ask, never tell
@@ -334,20 +334,19 @@ class CDRipper:
                     last_track_retries = self.config['last_track'].get('retries', 1)
                     last_track_paranoia = self.config['last_track'].get('paranoia', 'minimal')
                     leadout_detection = self.config['last_track'].get('leadout_detection', False)
-                    
                     # For last track, rebuild command with special handling
                     track_cmd = [
-                        'cdparanoia',
+                        'cd-paranoia',
+                        '--force-overread',
                         '-d', device,
                         '-z',  # Never ask, never tell
-                        '--force-overread',  # Critical: Force overreading into lead-out (whipper approach)
+                        '-Y',  # Most lenient, bypass lead-out verification
                     ]
-                    
                     # Apply last track paranoia settings
                     if last_track_paranoia == 'minimal':
-                        track_cmd.append('-Y')  # Most lenient, bypass lead-out verification
+                        pass  # Already using -Y above
                     else:
-                        track_cmd.append('-Z')  # Standard burst mode
+                        track_cmd[-1] = '-Z'  # Replace -Y with -Z for standard burst mode
                     
                     # Add track and output first
                     track_cmd.extend([f'{i}', str(track_file)])
@@ -630,7 +629,7 @@ class CDRipper:
                 
                 # Use cdparanoia in paranoia mode
                 cmd = [
-                    'cdparanoia',
+                    'cd-paranoia',
                     '-d', device,
                     '-z',  # Never ask, never tell
                 ]
@@ -641,7 +640,6 @@ class CDRipper:
                     if force_overread:
                         cmd.append('--force-overread')
                         self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
-                    
                     # Use minimal paranoia for last track to avoid lead-out issues
                     cmd.append('-Y')  # Most lenient paranoia mode
                     self.logger.info(f"Using minimal paranoia mode for last track {i}")
@@ -670,12 +668,11 @@ class CDRipper:
                     # Special last track handling in paranoia mode
                     if i == len(tracks):
                         self.logger.warning(f"Last track failed in paranoia mode: {result.stderr}")
-                        
                         # Try one final desperate attempt with absolute minimal settings
                         if '--force-overread' not in cmd:
                             self.logger.info("Attempting final recovery with emergency settings...")
                             emergency_cmd = [
-                                'cdparanoia',
+                                'cd-paranoia',
                                 '-d', device,
                                 '-z',  # Never ask, never tell
                                 '-Y',  # Most lenient
@@ -683,10 +680,8 @@ class CDRipper:
                                 '-n', '1',  # Single attempt
                                 f'{i}', str(track_file)
                             ]
-                            
                             if self.config['cd_drive']['offset'] != 0:
                                 emergency_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                            
                             emergency_result = self._run_cancellable_subprocess(emergency_cmd, timeout=1200)
                             
                             if emergency_result.returncode == 0:
@@ -1146,20 +1141,18 @@ class CDRipper:
         try:
             # Try to read the CD table of contents
             result = subprocess.run(
-                ['cdparanoia', '-Q', '-d', self.device],
+                ['cd-paranoia', '-Q', '-d', self.device],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
-            
-            # If cdparanoia can read the TOC, a CD is present
+            # If cd-paranoia can read the TOC, a CD is present
             return result.returncode == 0 and 'track' in result.stderr.lower()
-            
         except subprocess.TimeoutExpired:
             self.logger.warning("CD check timed out")
             return False
         except FileNotFoundError:
-            self.logger.error("cdparanoia not found")
+            self.logger.error("cd-paranoia not found")
             return False
         except Exception as e:
             self.logger.debug(f"Error checking CD presence: {e}")

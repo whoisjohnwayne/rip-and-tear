@@ -13,7 +13,7 @@ RUN apk update && \
         udev \
         util-linux \
         # Audio tools
-        cdparanoia \
+        libcdio-paranoia \
         flac \
         cdrkit \
         libcdio \
