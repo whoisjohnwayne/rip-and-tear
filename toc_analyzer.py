@@ -374,34 +374,40 @@ class TOCAnalyzer:
             return "UNKNOWN"
     
     def _calculate_musicbrainz_disc_id(self, tracks: List[TrackInfo]) -> Optional[str]:
-        """Calculate proper MusicBrainz disc ID using python-discid"""
+        """Calculate proper MusicBrainz disc ID using python-discid with correct algorithm"""
         try:
             if not DISCID_AVAILABLE:
-                self.logger.warning("python-discid not available, falling back to cd-discid command")
-                return self._calculate_musicbrainz_disc_id_fallback(tracks)
+                self.logger.warning("python-discid not available, falling back to manual calculation")
+                return self._calculate_musicbrainz_disc_id_manual(tracks)
             
             # Use python-discid for proper MusicBrainz disc ID calculation
             self.logger.info("Calculating MusicBrainz disc ID using python-discid")
             
-            # Create track offsets list for discid
-            # MusicBrainz expects: [track1_offset, track2_offset, ..., leadout_offset]
-            track_offsets = []
+            # Create track offsets list for discid - CRITICAL: correct format for python-discid
+            # python-discid.put() expects: first_track, last_track, leadout_offset, [track_offsets]
             
+            first_track = 1
+            last_track = len(tracks)
+            
+            # Calculate track offsets (in sectors, including the standard 150-sector offset)
+            track_offsets = []
             for track in tracks:
-                # CD offset standard: track start + 150 sectors (2 seconds)
+                # MusicBrainz standard: actual CD sectors + 150 (2-second lead-in)
                 offset = track.start_sector + 150
                 track_offsets.append(offset)
             
-            # Add leadout offset
+            # Calculate leadout offset
             if tracks:
-                last_track = tracks[-1]
-                leadout = last_track.start_sector + last_track.length_sectors + 150
-                track_offsets.append(leadout)
+                last_track_info = tracks[-1]
+                leadout_offset = last_track_info.start_sector + last_track_info.length_sectors + 150
+            else:
+                leadout_offset = 150
             
-            self.logger.debug(f"Track offsets for MusicBrainz: {track_offsets}")
+            self.logger.debug(f"MusicBrainz calculation: first={first_track}, last={last_track}, leadout={leadout_offset}")
+            self.logger.debug(f"Track offsets: {track_offsets}")
             
-            # Calculate disc ID using python-discid
-            disc = discid.put(len(tracks), track_offsets)
+            # Use python-discid with correct parameters
+            disc = discid.put(first_track, last_track, leadout_offset, track_offsets)
             musicbrainz_id = disc.id
             
             self.logger.info(f"Calculated MusicBrainz disc ID: {musicbrainz_id}")
@@ -409,6 +415,75 @@ class TOCAnalyzer:
             
         except Exception as e:
             self.logger.error(f"MusicBrainz disc ID calculation failed: {e}")
+            return self._calculate_musicbrainz_disc_id_manual(tracks)
+    
+    def _calculate_musicbrainz_disc_id_manual(self, tracks: List[TrackInfo]) -> Optional[str]:
+        """Manual MusicBrainz disc ID calculation following official specification"""
+        try:
+            import hashlib
+            import base64
+            
+            if not tracks:
+                return None
+            
+            self.logger.info("Calculating MusicBrainz disc ID manually using official algorithm")
+            
+            # Step 1: Build the hex string according to MusicBrainz specification
+            first_track = 1
+            last_track = len(tracks)
+            
+            # Calculate track offsets
+            track_offsets = []
+            for track in tracks:
+                # MusicBrainz uses sector offsets + 150 (2-second lead-in)
+                offset = track.start_sector + 150
+                track_offsets.append(offset)
+            
+            # Calculate lead-out offset
+            if tracks:
+                last_track_info = tracks[-1]
+                leadout_offset = last_track_info.start_sector + last_track_info.length_sectors + 150
+            else:
+                leadout_offset = 150
+            
+            # Build the hex string for SHA-1 hashing
+            hex_string = ""
+            
+            # First track number (2-digit hex)
+            hex_string += "{:02X}".format(first_track)
+            
+            # Last track number (2-digit hex)
+            hex_string += "{:02X}".format(last_track)
+            
+            # Lead-out track offset (8-digit hex) - this is position 0 in the frame offset array
+            hex_string += "{:08X}".format(leadout_offset)
+            
+            # 99 track offsets (8-digit hex each) - positions 1-99 in the frame offset array
+            for i in range(99):
+                if i < len(track_offsets):
+                    hex_string += "{:08X}".format(track_offsets[i])
+                else:
+                    hex_string += "00000000"  # Pad with zeros
+            
+            self.logger.debug(f"MusicBrainz hex string (length {len(hex_string)}): {hex_string[:100]}...")
+            
+            # Step 2: SHA-1 hash the hex string
+            sha1 = hashlib.sha1()
+            sha1.update(hex_string.encode('ascii'))
+            digest = sha1.digest()
+            
+            # Step 3: Base64 encode with MusicBrainz character substitutions
+            # Standard base64
+            b64 = base64.b64encode(digest).decode('ascii')
+            
+            # MusicBrainz substitutions: + -> ., / -> _, = -> -
+            mb_b64 = b64.replace('+', '.').replace('/', '_').replace('=', '-')
+            
+            self.logger.info(f"Manual MusicBrainz disc ID: {mb_b64}")
+            return mb_b64
+            
+        except Exception as e:
+            self.logger.error(f"Manual MusicBrainz disc ID calculation failed: {e}")
             return self._calculate_musicbrainz_disc_id_fallback(tracks)
     
     def _calculate_musicbrainz_disc_id_fallback(self, tracks: List[TrackInfo]) -> Optional[str]:
