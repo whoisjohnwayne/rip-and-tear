@@ -125,18 +125,22 @@ class TOCAnalyzer:
             # Get CD-Text if available
             cd_text = self._read_cd_text()
             
-            # Get disc identification
-            disc_id = self._calculate_precise_disc_id(detailed_tracks)
+            # CRITICAL: Filter out any duplicate tracks before creating DiscInfo
+            # This prevents MusicBrainz from seeing wrong track counts (e.g., 12 instead of 6)
+            filtered_tracks = self._filter_duplicate_tracks(detailed_tracks)
+            
+            # Get disc identification from filtered tracks
+            disc_id = self._calculate_precise_disc_id(filtered_tracks)
             
             # Calculate MusicBrainz disc ID using python-discid if available
-            musicbrainz_disc_id = self._calculate_musicbrainz_disc_id(detailed_tracks)
+            musicbrainz_disc_id = self._calculate_musicbrainz_disc_id(filtered_tracks)
             
             disc_info = DiscInfo(
-                total_sectors=basic_toc.get('total_sectors', sum(t.length_sectors for t in detailed_tracks)),
-                leadout_sector=basic_toc.get('leadout_sector', sum(t.length_sectors for t in detailed_tracks)),
+                total_sectors=basic_toc.get('total_sectors', sum(t.length_sectors for t in filtered_tracks)),
+                leadout_sector=basic_toc.get('leadout_sector', sum(t.length_sectors for t in filtered_tracks)),
                 first_track=basic_toc.get('first_track', 1),
-                last_track=basic_toc.get('last_track', len(detailed_tracks)),
-                tracks=detailed_tracks,
+                last_track=basic_toc.get('last_track', len(filtered_tracks)),
+                tracks=filtered_tracks,
                 has_cd_text=bool(cd_text),
                 disc_id=disc_id,
                 musicbrainz_disc_id=musicbrainz_disc_id,
@@ -433,6 +437,40 @@ class TOCAnalyzer:
         except Exception as e:
             self.logger.error(f"MusicBrainz disc ID fallback failed: {e}")
             return None
+    
+    def _filter_duplicate_tracks(self, tracks: List[TrackInfo]) -> List[TrackInfo]:
+        """Filter out duplicate tracks by track number to prevent MusicBrainz errors"""
+        try:
+            if not tracks:
+                return tracks
+            
+            # Check for duplicates
+            track_numbers = [track.number for track in tracks]
+            unique_numbers = list(set(track_numbers))
+            
+            if len(track_numbers) == len(unique_numbers):
+                self.logger.debug(f"No duplicate tracks found ({len(tracks)} tracks)")
+                return tracks
+            
+            # Filter duplicates - keep first occurrence of each track number
+            self.logger.warning(f"Found duplicate tracks! Raw: {track_numbers}, Unique: {unique_numbers}")
+            
+            seen_numbers = set()
+            filtered_tracks = []
+            
+            for track in tracks:
+                if track.number not in seen_numbers:
+                    seen_numbers.add(track.number)
+                    filtered_tracks.append(track)
+                else:
+                    self.logger.warning(f"Removing duplicate track {track.number}")
+            
+            self.logger.info(f"Filtered tracks: {len(tracks)} → {len(filtered_tracks)} (removed {len(tracks) - len(filtered_tracks)} duplicates)")
+            return filtered_tracks
+            
+        except Exception as e:
+            self.logger.error(f"Error filtering duplicate tracks: {e}")
+            return tracks  # Return original tracks if filtering fails
     
     def _get_catalog_number(self) -> Optional[str]:
         """Get catalog number (UPC/EAN) if available"""
