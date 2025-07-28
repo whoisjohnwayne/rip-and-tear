@@ -581,7 +581,7 @@ class TOCAnalyzer:
         
         return None
     
-    def _parse_cd-paranoia_gaps(self, output: str) -> List[TrackInfo]:
+    def _parse_cd_paranoia_gaps(self, output: str) -> List[TrackInfo]:
         """Parse cd-paranoia verbose output for gap information"""
         tracks = []
         lines = output.strip().split('\n')
@@ -629,7 +629,7 @@ class TOCAnalyzer:
         
         return tracks
 
-    def _parse_cd-paranoia_output(self, output: str) -> Dict[str, Any]:
+    def _parse_cd_paranoia_output(self, output: str) -> Dict[str, Any]:
         """Parse cd-paranoia -Q output based on actual cd-paranoia format"""
         tracks = []
         lines = output.strip().split('\n')
