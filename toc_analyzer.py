@@ -155,29 +155,33 @@ class TOCAnalyzer:
             return None
 
     def _get_toc_cdrdao(self) -> Optional[Dict[str, Any]]:
-        """Get TOC using cdrdao read-toc for enhanced gap detection and CD-Text extraction"""
+        """Get TOC using cdrdao read-toc"""
         try:
-            result = subprocess.run(
-                ['cdrdao', 'read-toc', '--device', self.device],
-                capture_output=True, text=True, timeout=30
+            create_toc = subprocess.Popen(
+                ['cdrdao', 'read-toc', '--fast-toc', '--device', self.device, '--datafile', 'toc.toc'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
 
-            if result.returncode != 0:
-                self.logger.error(f"cdrdao read-toc failed with return code {result.returncode}")
-                if result.stderr:
-                    self.logger.error(f"cdrdao stderr: {result.stderr}")
+            create_toc.wait()
+
+            with open('toc.toc', r) as fh:
+                toc_data = fh.read()
+
+            if create_toc.returncode != 0:
+                self.logger.error(f"cdrdao read-toc failed with return code {create_toc.returncode}")
+                if create_toc.stderr:
+                    self.logger.error(f"cdrdao stderr: {create_toc.stderr}")
                 return None
 
             self.logger.info("=== RAW CDRDAO OUTPUT ===")
-            self.logger.info(f"STDOUT:\n{result.stdout}")
-            self.logger.info(f"STDERR:\n{result.stderr}")
+            self.logger.info(print(toc_data))
             self.logger.info("=== END RAW OUTPUT ===")
 
             # Parse TOC for track information and gaps
-            parsed_toc = self._parse_cdrdao_output(result.stdout)
+            parsed_toc = self._parse_cdrdao_output(toc_data)
 
             # Extract CD-Text information
-            cd_text_info = self._extract_cd_text(result.stdout)
+            cd_text_info = self._extract_cd_text(toc_data)
             if cd_text_info:
                 parsed_toc['cd_text'] = cd_text_info
 
