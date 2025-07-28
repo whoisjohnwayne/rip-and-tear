@@ -59,6 +59,7 @@ class ConfigManager:
                 'device': '/dev/cdrom',
                 'offset': 0,  # Drive offset correction in samples (set to your drive's specific offset)
                 'speed': 'max',  # Ripping speed
+                'force_overread': False,  # Default to False
             },
             'output': {
                 'directory': os.getenv('OUTPUT_DIR', '/output'),
@@ -137,8 +138,6 @@ class ConfigManager:
             'ACCURATERIP_REQUIRE_BOTH': ('ripping', 'accuraterip_require_both', self._str_to_bool),
             'PARANOIA_MODE': ('ripping', 'paranoia_mode'),
             'MAX_RETRIES': ('ripping', 'max_retries', int),
-            'LAST_TRACK_RETRIES': ('ripping', 'last_track_retries', int),
-            'LAST_TRACK_PARANOIA': ('ripping', 'last_track_paranoia'),
             'LEADOUT_DETECTION': ('ripping', 'leadout_detection'),
             'SECTOR_RETRIES': ('ripping', 'sector_retries', int),
             'ENABLE_GAP_DETECTION': ('ripping', 'enable_gap_detection', self._str_to_bool),
