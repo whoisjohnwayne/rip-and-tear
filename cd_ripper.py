@@ -351,12 +351,13 @@ class CDRipper:
                     track_cmd = [
                         'cd-paranoia',
                     ]
-                    track_cmd.append('--force-overread')
+                    if self.config['cd_drive'].get('force_overread', True):
+                        track_cmd.append('--force-overread')
                     self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
                     track_cmd += [
                         '-d', device,
                         '-z',  # Never ask, never tell
-                        '-Y',  # Most lenient, bypass lead-out verification
+                        '-Z',  # Disable all paranoia checks for speed (burst mode)
                     ]
                     if self.config['cd_drive']['offset'] != 0:
                         track_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
@@ -406,9 +407,11 @@ class CDRipper:
                             '-d', device,
                             '-z',  # Never ask, never tell
                             '-Y',  # Most lenient paranoia mode
-                            '--force-overread',
                         ]
-                        
+                        if self.config['cd_drive'].get('force_overread', True):
+                          track_cmd.append('--force-overread')
+                          self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
+
                         if self.config['cd_drive']['offset'] != 0:
                             recovery_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                         
@@ -671,15 +674,15 @@ class CDRipper:
                     cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 # Special handling for last track in paranoia mode
                 if i == len(tracks):
-                    cmd.append('--force-overread')
-                    self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
+                    if self.config['cd_drive'].get('force_overread', True):
+                        cmd.append('--force-overread')
+                        self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
                     # Use minimal paranoia for last track to avoid lead-out issues
                     cmd.append('-Y')  # Most lenient paranoia mode
                     self.logger.info(f"Using minimal paranoia mode for last track {i}")
                 cmd.extend([f'{i}', str(track_file)])
 
                 # Use extended timeout for last track
-                timeout = 1800
                 if i == len(tracks):
                     timeout = self.config.get('timeout', 900)
                     self.logger.info(f"Using extended timeout {timeout}s for last track {i}")
