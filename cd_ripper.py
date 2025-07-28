@@ -105,8 +105,6 @@ class CDRipper:
             # Create output directory for this album
             album_dir = self._create_album_directory(metadata)
             
-            # Diagnose potential last track issues before starting
-            self._diagnose_last_track_issue(disc_info)
             
             # Try burst mode rip first
             if self.config['ripping']['try_burst_first']:
