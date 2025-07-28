@@ -296,38 +296,6 @@ class CDRipper:
         # Remove multiple spaces and trim
         filename = ' '.join(filename.split())
         return filename.strip()
-    
-    def _diagnose_last_track_issue(self, disc_info: DiscInfo) -> None:
-        """Diagnose potential last track issues and log helpful information"""
-        if not disc_info.tracks:
-            return
-            
-        last_track = disc_info.tracks[-1]
-        total_tracks = len(disc_info.tracks)
-        
-        self.logger.info("=== Last Track Diagnostic Information ===")
-        self.logger.info(f"Total tracks on disc: {total_tracks}")
-        self.logger.info(f"Last track number: {total_tracks}")
-        self.logger.info(f"Last track length: {last_track.length_seconds:.2f} seconds")
-        self.logger.info(f"Last track start sector: {last_track.start_sector}")
-        self.logger.info(f"Last track length sectors: {last_track.length_sectors}")
-        
-        # Calculate estimated lead-out position
-        leadout_sector = last_track.start_sector + last_track.length_sectors
-        self.logger.info(f"Estimated lead-out sector: {leadout_sector}")
-        
-        # Check for problematic configurations
-        if last_track.length_seconds < 4.0:
-            self.logger.warning(f"Last track is very short ({last_track.length_seconds:.2f}s) - may cause lead-out issues")
-        
-        if total_tracks >= 99:
-            self.logger.warning("Disc has 99 tracks - known cd-paranoia issue (see whipper issue #302)")
-            
-        drive_offset = self.config['cd_drive']['offset']
-        if abs(drive_offset) > 587:
-            self.logger.warning(f"Large drive offset ({drive_offset}) may cause issues with last track")
-            
-        self.logger.info("=== End Diagnostic Information ===")
 
     def _rip_burst_mode(self, disc_info: DiscInfo, output_dir: Path, metadata: Dict[str, Any] = None) -> bool:
         """Rip in burst mode (fast) with immediate per-track encoding"""
@@ -382,21 +350,11 @@ class CDRipper:
                 track_cmd = cmd + [f'{i}', str(track_file)]
                 # Apply last track specific settings
                 if i == len(tracks):
-                    last_track_retries = self.config['last_track'].get('retries', 1)
-                    last_track_paranoia = self.config['last_track'].get('paranoia', 'minimal')
-                    leadout_detection = self.config['last_track'].get('leadout_detection', False)
-                    force_overread = self.config['last_track'].get('force_overread', True)
-                    # Check drive capability for overread
-                    enable_overread = force_overread
-                    # For last track, rebuild command with special handling
                     track_cmd = [
                         'cd-paranoia',
                     ]
-                    if enable_overread:
-                        track_cmd.append('--force-overread')
-                        self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
-                    else:
-                        self.logger.info(f"Drive does not support overread: NOT enabling --force-overread for last track.")
+                    track_cmd.append('--force-overread')
+                    self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
                     track_cmd += [
                         '-d', device,
                         '-z',  # Never ask, never tell
@@ -404,11 +362,6 @@ class CDRipper:
                     ]
                     if self.config['cd_drive']['offset'] != 0:
                         track_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                    # Apply last track paranoia settings
-                    if last_track_paranoia == 'minimal':
-                        pass  # Already using -Y above
-                    else:
-                        track_cmd[-1] = '-Z'  # Replace -Y with -Z for standard burst mode
                     # Add track and output
                     track_cmd.extend([f'{i}', str(track_file)])
                     # Extra validation: ensure output filename is not empty
@@ -418,9 +371,6 @@ class CDRipper:
                     if not track_cmd[-1] or track_cmd[-1].strip() == '':
                         self.logger.error(f"BUG: Last track cd-paranoia command missing output filename! Command: {' '.join(track_cmd)}")
                         raise RuntimeError(f"BUG: Last track cd-paranoia command missing output filename! Command: {' '.join(track_cmd)}")
-                    # Then add retry setting (must come after track specification)
-                    if last_track_retries > 0:
-                        track_cmd.extend(['-n', str(last_track_retries)])
                     self.logger.info(f"Last track special command: {' '.join(track_cmd)}")
                 # Handle pre-gaps and HTOA
                 if track.has_htoa and i == 1:
@@ -432,34 +382,6 @@ class CDRipper:
                     subprocess.run(htoa_cmd, capture_output=True, text=True, timeout=600)
                 # Debug: Log the exact command being executed
                 self.logger.info(f"Executing cd-paranoia command: {' '.join(track_cmd)}")
-
-                # Check for cancellation before ripping
-                if self._check_cancelled():
-                    return False
-
-                self.logger.info(f"Ripping track {i}...")
-                self.progress = base_progress
-                result = self._run_cancellable_subprocess(track_cmd, timeout=600)
-                
-                # Check for cancellation after ripping
-                if self._check_cancelled():
-                    return False
-                
-                if i == len(tracks):
-                    self.logger.info(f"Applying last track settings for track {i}")
-                    
-                    # Replace -Z with -Y for more lenient last track handling
-                    cmd = [c if c != '-Z' else '-Y' for c in cmd]
-                    
-                    # Add force-overread if configured (helps with lead-out detection)
-                    if self.config.get('last_track', {}).get('force_overread', True):
-                        cmd.append('--force-overread')
-                        self.logger.info("Added --force-overread for last track")
-
-                # Add track number and output file
-                track_cmd = cmd + [f'{i}', str(track_file)]
-
-                self.logger.info(f"Track {i} command: {' '.join(track_cmd)}")
 
                 # Check for cancellation before ripping
                 if self._check_cancelled():
@@ -751,10 +673,8 @@ class CDRipper:
                     cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
                 # Special handling for last track in paranoia mode
                 if i == len(tracks):
-                    force_overread = self.config.get('last_track', {}).get('force_overread', True)
-                    if force_overread:
-                        cmd.append('--force-overread')
-                        self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
+                    cmd.append('--force-overread')
+                    self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
                     # Use minimal paranoia for last track to avoid lead-out issues
                     cmd.append('-Y')  # Most lenient paranoia mode
                     self.logger.info(f"Using minimal paranoia mode for last track {i}")
@@ -763,7 +683,7 @@ class CDRipper:
                 # Use extended timeout for last track
                 timeout = 1800
                 if i == len(tracks):
-                    timeout = self.config.get('last_track', {}).get('timeout', 900)
+                    timeout = self.config.get('timeout', 900)
                     self.logger.info(f"Using extended timeout {timeout}s for last track {i}")
 
                 self.logger.info(f"Ripping track {i} in paranoia mode...")
