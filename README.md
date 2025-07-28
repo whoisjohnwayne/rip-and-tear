@@ -168,7 +168,6 @@ environment:
 environment:
   - OUTPUT_FORMAT=flac            # Output format
   - COMPRESSION_LEVEL=8           # FLAC compression (0-8)
-  - CREATE_CUE=true               # Create CUE sheets
   - CREATE_LOG=true               # Create rip logs
   - PRESERVE_HTOA=true            # Extract hidden tracks
   - GAP_HANDLING=preserve         # Gap handling mode
@@ -210,7 +209,6 @@ output:
   directory: "/output"        # Output directory for ripped files
   format: "flac"             # Output format (currently only FLAC)
   compression_level: 8        # FLAC compression level (0-8)
-  create_cue: true           # Create CUE sheets
   create_log: true           # Create rip logs
 ```
 

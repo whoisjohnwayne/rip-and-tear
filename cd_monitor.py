@@ -76,7 +76,6 @@ class CDMonitor:
             return result.returncode == 0 and 'track' in result.stderr.lower()
             
         except subprocess.TimeoutExpired:
-            self.logger.warning("CD check timed out")
             return False
         except FileNotFoundError:
             self.logger.error("cd-paranoia not found")

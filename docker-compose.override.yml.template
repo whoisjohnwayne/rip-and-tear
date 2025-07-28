@@ -52,7 +52,6 @@ services:
       - COMPRESSION_LEVEL=8         # FLAC compression: 0 (fast) to 8 (best compression)
       
       # Additional files to create
-      - CREATE_CUE=true             # Create CUE sheets with gap information
       - CREATE_LOG=true             # Create detailed rip logs
       
       # Special track handling
@@ -128,6 +127,5 @@ services:
 # - COMPRESSION_LEVEL=8
 # - PRESERVE_HTOA=true
 # - GAP_HANDLING=preserve
-# - CREATE_CUE=true
 # - CREATE_LOG=true
 # - ENABLE_GAP_DETECTION=true

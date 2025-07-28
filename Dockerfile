@@ -33,7 +33,8 @@ RUN apk update && \
         rust \
         cargo \
         pkgconfig \
-        make
+        make \
+        cdrdao
 
 # Create python symlink and upgrade pip
 RUN ln -sf python3 /usr/bin/python && \

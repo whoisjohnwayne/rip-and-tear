@@ -12,7 +12,6 @@ output:
   directory: "/output"
   format: "flac"
   compression_level: 8  # FLAC compression level (0-8, higher = smaller files)
-  create_cue: true
   create_log: true
   preserve_htoa: true  # Preserve Hidden Track One Audio
   gap_handling: "preserve"  # "preserve", "skip", "append" - how to handle gaps

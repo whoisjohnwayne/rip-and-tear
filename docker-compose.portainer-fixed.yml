@@ -37,7 +37,6 @@ services:
       # Output Configuration
       - OUTPUT_FORMAT=flac
       - COMPRESSION_LEVEL=8
-      - CREATE_CUE=true
       - CREATE_LOG=true
       
     restart: unless-stopped

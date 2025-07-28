@@ -75,8 +75,6 @@ class ConfigManager:
                 'accuraterip_require_both': False,
                 'paranoia_mode': 'full',  # full, overlap, neverskip
                 'max_retries': 10,
-                'last_track_retries': 1,  # Very aggressive - just try once and move on
-                'last_track_paranoia': 'minimal',  # Bypass lead-out verification by default
                 'leadout_detection': 'disabled',  # Completely bypass lead-out logic by default
             },
             'metadata': {
@@ -126,7 +124,7 @@ class ConfigManager:
             # Output settings
             'OUTPUT_FORMAT': ('output', 'format'),
             'COMPRESSION_LEVEL': ('output', 'compression_level', int),
-            'CREATE_CUE': ('output', 'create_cue', self._str_to_bool),
+#            'CREATE_CUE': ('output', 'create_cue', self._str_to_bool),
             'CREATE_LOG': ('output', 'create_log', self._str_to_bool),
             'PRESERVE_HTOA': ('output', 'preserve_htoa', self._str_to_bool),
             'GAP_HANDLING': ('output', 'gap_handling'),

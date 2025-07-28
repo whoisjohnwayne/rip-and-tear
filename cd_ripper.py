@@ -353,7 +353,7 @@ class CDRipper:
                     ]
                     if self.config['cd_drive'].get('force_overread', True):
                         track_cmd.append('--force-overread')
-                    self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
+                        self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
                     track_cmd += [
                         '-d', device,
                         '-z',  # Never ask, never tell
@@ -970,14 +970,14 @@ class CDRipper:
                 self.logger.info("Skipping batch encoding (already done per-track)")
             
             # Create CUE sheet with gap information
-            if self.config['output']['create_cue']:
-                self._update_status(RipStatus.CREATING_CUE)
-                self.cue_generator.create_cue_sheet(disc_info, metadata, output_dir)
+            # if self.config['output']['create_cue']:
+            #    self._update_status(RipStatus.CREATING_CUE)
+            #    self.cue_generator.create_cue_sheet(output_dir)
                 
-                # Check for cancellation after CUE creation
-                if self._check_cancelled():
-                    self.logger.info("Finalization cancelled by user after CUE creation")
-                    return False
+            # Check for cancellation after CUE creation
+            #    if self._check_cancelled():
+            #        self.logger.info("Finalization cancelled by user after CUE creation")
+            #        return False
             
             # Create log file
             if self.config['output']['create_log']:
@@ -1119,7 +1119,7 @@ class CDRipper:
         
         return True
     
-    def _create_log_file(self, toc_info: Dict[str, Any], metadata: Dict[str, Any], output_dir: Path):
+    def _create_log_file(self, toc_info: DiscInfo, metadata: Dict[str, Any], output_dir: Path):
         """Create rip log file"""
         log_content = [
             "Rip and Tear Log File",
@@ -1132,12 +1132,12 @@ class CDRipper:
             f"  Artist: {metadata.get('artist', 'Unknown')}",
             f"  Album: {metadata.get('album', 'Unknown')}",
             f"  Date: {metadata.get('date', 'Unknown')}",
-            f"  Tracks: {len(toc_info['tracks'])}",
+            f"  Tracks: {len(toc_info.tracks)}",
             "",
             "Track Information:",
         ]
         
-        for i, track in enumerate(toc_info['tracks'], 1):
+        for i, track in enumerate(toc_info.tracks, 1):
             track_meta = metadata.get('tracks', [])
             title = 'Unknown'
             if i <= len(track_meta):
@@ -1147,7 +1147,7 @@ class CDRipper:
         
         log_content.extend([
             "",
-            f"Total Time: {toc_info['total_time']}",
+            f"Total Time: {toc_info.total_time}",
             f"Rip Mode: {'Burst + AccurateRip' if self.config['ripping']['try_burst_first'] else 'Paranoia'}",
             f"Encoding: FLAC Level {self.config['output']['compression_level']}",
         ])
@@ -1176,7 +1176,6 @@ class CDRipper:
             # If cd-paranoia can read the TOC, a CD is present
             return result.returncode == 0 and 'track' in result.stderr.lower()
         except subprocess.TimeoutExpired:
-            self.logger.warning("CD check timed out")
             return False
         except FileNotFoundError:
             self.logger.error("cd-paranoia not found")

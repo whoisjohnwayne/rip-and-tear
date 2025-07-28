@@ -105,7 +105,7 @@ class TOCAnalyzer:
             self.logger.info("Starting comprehensive disc analysis...")
             
             # Get basic TOC information
-            basic_toc = self._get_basic_toc()
+            basic_toc = self._get_toc_cdrdao()
             if not basic_toc:
                 self.logger.error("Failed to read basic TOC from CD")
                 return None
@@ -153,114 +153,102 @@ class TOCAnalyzer:
         except Exception as e:
             self.logger.error(f"Disc analysis failed: {e}")
             return None
-    
-    def _get_basic_toc(self) -> Optional[Dict[str, Any]]:
-        """Get basic TOC using cd-paranoia (most reliable method)"""
-        try:
-            result = self._get_toc_cd_paranoia()
-            if result:
-                self.logger.info("TOC obtained using cd-paranoia")
-                return result
-            else:
-                self.logger.error("Failed to get TOC using cd-paranoia")
-                return None
-        except Exception as e:
-            self.logger.error(f"cd-paranoia failed: {e}")
-            return None
-    
-    def _get_toc_cd_paranoia(self) -> Optional[Dict[str, Any]]:
-        """Get TOC using cd-paranoia"""
+
+    def _get_toc_cdrdao(self) -> Optional[Dict[str, Any]]:
+        """Get TOC using cdrdao read-toc for enhanced gap detection and CD-Text extraction"""
         try:
             result = subprocess.run(
-                ['cd-paranoia', '-Q', '-d', self.device],
-                capture_output=True,
-                text=True,
-                timeout=30
+                ['cdrdao', 'read-toc', '--device', self.device],
+                capture_output=True, text=True, timeout=30
             )
-            
+
             if result.returncode != 0:
-                self.logger.error(f"cd-paranoia failed with return code {result.returncode}")
+                self.logger.error(f"cdrdao read-toc failed with return code {result.returncode}")
                 if result.stderr:
-                    self.logger.error(f"cd-paranoia stderr: {result.stderr}")
+                    self.logger.error(f"cdrdao stderr: {result.stderr}")
                 return None
-            
-            # Log the ACTUAL output so we can see what we're trying to parse
-            self.logger.info("=== RAW CD-PARANOIA OUTPUT ===")
+
+            self.logger.info("=== RAW CDRDAO OUTPUT ===")
             self.logger.info(f"STDOUT:\n{result.stdout}")
             self.logger.info(f"STDERR:\n{result.stderr}")
             self.logger.info("=== END RAW OUTPUT ===")
-            
-            # cd-paranoia outputs to STDERR, not STDOUT
-            output_to_parse = result.stderr if result.stderr.strip() else result.stdout
-            
-            return self._parse_cd_paranoia_output(output_to_parse)
-        
+
+            # Parse TOC for track information and gaps
+            parsed_toc = self._parse_cdrdao_output(result.stdout)
+
+            # Extract CD-Text information
+            cd_text_info = self._extract_cd_text(result.stdout)
+            if cd_text_info:
+                parsed_toc['cd_text'] = cd_text_info
+
+            return parsed_toc
+
         except subprocess.TimeoutExpired:
-            self.logger.error("cd-paranoia timed out")
+            self.logger.error("cdrdao read-toc timed out")
             return None
         except Exception as e:
-            self.logger.error(f"cd-paranoia execution failed: {e}")
+            self.logger.error(f"cdrdao read-toc execution failed: {e}")
             return None
-    
-    def _get_toc_cdrdao(self) -> Optional[Dict[str, Any]]:
-        """Get TOC using cdrdao for enhanced gap detection"""
-        result = subprocess.run(
-            ['cdrdao', 'disk-info', '--device', self.device],
-            capture_output=True, text=True, timeout=30
-        )
-        
-        if result.returncode != 0:
-            return None
-        
-        return self._parse_cdrdao_output(result.stdout)
-    
-    def _get_toc_cd_discid(self) -> Optional[Dict[str, Any]]:
-        """Get TOC using cd-discid for precise timing"""
+
+    def _parse_cdrdao_output(self, output: str) -> Optional[Dict[str, Any]]:
+        """Parse cdrdao TOC file output"""
         try:
-            result = subprocess.run(
-                ['cd-discid', self.device],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode == 0:
-                return self._parse_discid_output(result.stdout)
-        except FileNotFoundError:
-            self.logger.debug("cd-discid not available")
-        
-        return None
-    
-    def _analyze_track_gaps(self, basic_toc: Dict[str, Any]) -> List[TrackInfo]:
-        """Analyze gaps between tracks with EAC-level precision"""
-        tracks = []
-        
-        # Always start with basic tracks as foundation
-        tracks = self._create_basic_tracks(basic_toc)
-        
-        self.logger.info(f"Created {len(tracks)} basic tracks from TOC data")
-        
-        # Try to enhance with gap information if tools are available
-        try:
-            # First, try cd-paranoia verbose for additional gap info
-            result = subprocess.run(
-                ['cd-paranoia', '-Q', '-d', self.device, '-v'],
-                capture_output=True, text=True, timeout=30
-            )
-            
-            if result.returncode == 0:
-                enhanced_tracks = self._parse_cd_paranoia_gaps(result.stderr)
-                if enhanced_tracks and len(enhanced_tracks) == len(tracks):
-                    # Merge gap information into basic tracks
-                    for i, enhanced_track in enumerate(enhanced_tracks):
-                        if i < len(tracks):
-                            tracks[i].pregap_sectors = enhanced_track.pregap_sectors
-                    self.logger.info("Enhanced tracks with gap information from cd-paranoia")
-                
+            parsed_data = {
+                'tracks': []
+            }
+            lines = output.splitlines()
+
+            for line in lines:
+                line = line.strip()
+
+                # Parse catalog number
+                if line.startswith('CATALOG'):
+                    match = re.search(r'"(\d{13})"', line)
+                    if match:
+                        parsed_data['catalog_number'] = match.group(1)
+
+                # Parse track information
+                elif line.startswith('TRACK AUDIO'):
+                    track = {
+                        'number': len(parsed_data['tracks']) + 1,
+                        'start_sector': 0,
+                        'length_sectors': 0
+                    }
+                    parsed_data['tracks'].append(track)
+
+                # Parse file information
+                elif line.startswith('FILE'):
+                    match = re.search(r'FILE "(.*?)" (\d+:\d+:\d+) (\d+:\d+:\d+)', line)
+                    if match and parsed_data['tracks']:
+                        file_name = match.group(1)
+                        start_time = match.group(2)
+                        length_time = match.group(3)
+
+                        # Convert start time and length time to sectors
+                        start_sector = self._time_to_sectors(start_time)
+                        length_sectors = self._time_to_sectors(length_time)
+
+                        # Update the last track with file information
+                        track = parsed_data['tracks'][-1]
+                        track['file'] = file_name
+                        track['start_sector'] = start_sector
+                        track['length_sectors'] = length_sectors
+
+            return parsed_data
+
         except Exception as e:
-            self.logger.debug(f"Gap enhancement failed (not critical): {e}")
-        
-        return tracks
+            self.logger.error(f"Failed to parse cdrdao output: {e}")
+            return None
+
+    def _time_to_sectors(self, time: str) -> int:
+        """Convert MM:SS:FF time format to sectors"""
+        try:
+            minutes, seconds, frames = map(int, time.split(':'))
+            return (minutes * 60 + seconds) * 75 + frames
+        except ValueError:
+            self.logger.warning(f"Invalid time format: {time}")
+            return 0
+
     
     def _parse_gap_analysis(self, toc_file: str) -> List[TrackInfo]:
         """Parse cdrdao TOC file for precise gap information"""
@@ -322,30 +310,28 @@ class TOCAnalyzer:
         return None
     
     def _read_cd_text(self) -> Optional[Dict[str, str]]:
-        """Read CD-Text information if available with robust parsing"""
+        """Read CD-Text information using cdrdao read-toc"""
         try:
             result = subprocess.run([
-                'cdrdao', 'read-cd', '--device', self.device, 
-                '--read-subchan', 'rw_raw', '/tmp/temp_cd_text.bin'
+                'cdrdao', 'read-toc', '--device', self.device
             ], capture_output=True, text=True, timeout=60)
-            
+
             if result.returncode == 0:
-                # Parse CD-Text from output with robust error handling
+                # Parse CD-Text from output
                 cd_text_info = {}
-                lines = result.stderr.split('\n')
-                
+                lines = result.stdout.split('\n')
+
                 for line in lines:
                     line = line.strip()
                     if 'CD_TEXT' in line:
                         try:
-                            # Extract CD-Text information with proper validation
-                            if 'TITLE' in line and 'TITLE' in line.upper():
+                            if 'TITLE' in line.upper():
                                 title_parts = line.split('TITLE', 1)
                                 if len(title_parts) > 1:
                                     title = title_parts[1].strip().strip('"\'')
                                     if title:
                                         cd_text_info['title'] = title
-                            elif 'PERFORMER' in line and 'PERFORMER' in line.upper():
+                            elif 'PERFORMER' in line.upper():
                                 performer_parts = line.split('PERFORMER', 1)
                                 if len(performer_parts) > 1:
                                     performer = performer_parts[1].strip().strip('"\'')
@@ -354,180 +340,14 @@ class TOCAnalyzer:
                         except (IndexError, AttributeError) as e:
                             self.logger.debug(f"Failed to parse CD-Text line '{line}': {e}")
                             continue
-                
+
                 return cd_text_info if cd_text_info else None
-                
+
         except Exception as e:
             self.logger.debug(f"CD-Text reading failed: {e}")
-        
+
         return None
-    
-    def _calculate_precise_disc_id(self, tracks: List[TrackInfo]) -> str:
-        """Calculate precise disc ID using track offsets"""
-        try:
-            # Calculate MusicBrainz-compatible disc ID
-            track_offsets = []
-            for track in tracks:
-                offset = track.start_sector + 150  # Add standard 2-second offset
-                track_offsets.append(offset)
-            
-            # Add leadout offset
-            if tracks:
-                leadout = tracks[-1].start_sector + tracks[-1].length_sectors + 150
-                track_offsets.append(leadout)
-            
-            # Generate disc ID hash
-            disc_id_data = f"{len(tracks)}"
-            for offset in track_offsets:
-                disc_id_data += f" {offset}"
-            
-            import hashlib
-            return hashlib.sha1(disc_id_data.encode()).hexdigest()[:8].upper()
-            
-        except Exception as e:
-            self.logger.error(f"Disc ID calculation failed: {e}")
-            return "UNKNOWN"
-    
-    def _calculate_musicbrainz_disc_id(self, tracks: List[TrackInfo]) -> Optional[str]:
-        """Calculate proper MusicBrainz disc ID using python-discid with correct algorithm"""
-        try:
-            if not DISCID_AVAILABLE:
-                self.logger.warning("python-discid not available, falling back to manual calculation")
-                return self._calculate_musicbrainz_disc_id_manual(tracks)
-            
-            # Use python-discid for proper MusicBrainz disc ID calculation
-            self.logger.info("Calculating MusicBrainz disc ID using python-discid")
-            
-            # Create track offsets list for discid - CRITICAL: correct format for python-discid
-            # python-discid.put() expects: first_track, last_track, leadout_offset, [track_offsets]
-            
-            first_track = 1
-            last_track = len(tracks)
-            
-            # Calculate track offsets (in sectors, including the standard 150-sector offset)
-            track_offsets = []
-            for track in tracks:
-                # MusicBrainz standard: actual CD sectors + 150 (2-second lead-in)
-                offset = track.start_sector + 150
-                track_offsets.append(offset)
-            
-            # Calculate leadout offset
-            if tracks:
-                last_track_info = tracks[-1]
-                leadout_offset = last_track_info.start_sector + last_track_info.length_sectors + 150
-            else:
-                leadout_offset = 150
-            
-            self.logger.debug(f"MusicBrainz calculation: first={first_track}, last={last_track}, leadout={leadout_offset}")
-            self.logger.debug(f"Track offsets: {track_offsets}")
-            
-            # Use python-discid with correct parameters
-            disc = discid.put(first_track, last_track, leadout_offset, track_offsets)
-            musicbrainz_id = disc.id
-            
-            self.logger.info(f"Calculated MusicBrainz disc ID: {musicbrainz_id}")
-            return musicbrainz_id
-            
-        except Exception as e:
-            self.logger.error(f"MusicBrainz disc ID calculation failed: {e}")
-            return self._calculate_musicbrainz_disc_id_manual(tracks)
-    
-    def _calculate_musicbrainz_disc_id_manual(self, tracks: List[TrackInfo]) -> Optional[str]:
-        """Manual MusicBrainz disc ID calculation following official specification"""
-        try:
-            import hashlib
-            import base64
-            
-            if not tracks:
-                return None
-            
-            self.logger.info("Calculating MusicBrainz disc ID manually using official algorithm")
-            
-            # Step 1: Build the hex string according to MusicBrainz specification
-            first_track = 1
-            last_track = len(tracks)
-            
-            # Calculate track offsets
-            track_offsets = []
-            for track in tracks:
-                # MusicBrainz uses sector offsets + 150 (2-second lead-in)
-                offset = track.start_sector + 150
-                track_offsets.append(offset)
-            
-            # Calculate lead-out offset
-            if tracks:
-                last_track_info = tracks[-1]
-                leadout_offset = last_track_info.start_sector + last_track_info.length_sectors + 150
-            else:
-                leadout_offset = 150
-            
-            # Build the hex string for SHA-1 hashing
-            hex_string = ""
-            
-            # First track number (2-digit hex)
-            hex_string += "{:02X}".format(first_track)
-            
-            # Last track number (2-digit hex)
-            hex_string += "{:02X}".format(last_track)
-            
-            # Lead-out track offset (8-digit hex) - this is position 0 in the frame offset array
-            hex_string += "{:08X}".format(leadout_offset)
-            
-            # 99 track offsets (8-digit hex each) - positions 1-99 in the frame offset array
-            for i in range(99):
-                if i < len(track_offsets):
-                    hex_string += "{:08X}".format(track_offsets[i])
-                else:
-                    hex_string += "00000000"  # Pad with zeros
-            
-            self.logger.debug(f"MusicBrainz hex string (length {len(hex_string)}): {hex_string[:100]}...")
-            
-            # Step 2: SHA-1 hash the hex string
-            sha1 = hashlib.sha1()
-            sha1.update(hex_string.encode('ascii'))
-            digest = sha1.digest()
-            
-            # Step 3: Base64 encode with MusicBrainz character substitutions
-            # Standard base64
-            b64 = base64.b64encode(digest).decode('ascii')
-            
-            # MusicBrainz substitutions: + -> ., / -> _, = -> -
-            mb_b64 = b64.replace('+', '.').replace('/', '_').replace('=', '-')
-            
-            self.logger.info(f"Manual MusicBrainz disc ID: {mb_b64}")
-            return mb_b64
-            
-        except Exception as e:
-            self.logger.error(f"Manual MusicBrainz disc ID calculation failed: {e}")
-            return self._calculate_musicbrainz_disc_id_fallback(tracks)
-    
-    def _calculate_musicbrainz_disc_id_fallback(self, tracks: List[TrackInfo]) -> Optional[str]:
-        """Fallback MusicBrainz disc ID calculation using cd-discid command"""
-        try:
-            self.logger.info("Using cd-discid fallback for MusicBrainz disc ID")
-            
-            result = subprocess.run(
-                ['cd-discid', self.device],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode == 0 and result.stdout.strip():
-                # cd-discid output format: "discid track_count offset1 offset2 ... leadout_offset track_length"
-                parts = result.stdout.strip().split()
-                if len(parts) >= 1:
-                    disc_id = parts[0]
-                    self.logger.info(f"MusicBrainz disc ID from cd-discid: {disc_id}")
-                    return disc_id
-            
-            self.logger.warning("cd-discid fallback failed")
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"MusicBrainz disc ID fallback failed: {e}")
-            return None
-    
+      
     def _filter_duplicate_tracks(self, tracks: List[TrackInfo]) -> List[TrackInfo]:
         """Filter out duplicate tracks by track number to prevent MusicBrainz errors"""
         try:
@@ -581,218 +401,6 @@ class TOCAnalyzer:
         
         return None
     
-    def _parse_cd_paranoia_gaps(self, output: str) -> List[TrackInfo]:
-        """Parse cd-paranoia verbose output for gap information"""
-        tracks = []
-        lines = output.strip().split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if line.startswith('track'):
-                # Parse: "track 01.  audio    00:32.17    760 [00:02.17]"
-                # The part in brackets is often the pregap
-                parts = line.split()
-                if len(parts) >= 4 and parts[2] == 'audio':
-                    track_num = int(parts[1].rstrip('.'))
-                    duration = parts[3]
-                    
-                    # Convert duration to sectors (75 sectors per second)
-                    sectors = 0
-                    if ':' in duration:
-                        time_parts = duration.split(':')
-                        minutes = int(time_parts[0])
-                        seconds = float(time_parts[1])
-                        sectors = int((minutes * 60 + seconds) * 75)
-                    
-                    # Look for pregap info in brackets
-                    pregap_sectors = 0
-                    bracket_match = re.search(r'\[(\d+):(\d+\.\d+)\]', line)
-                    if bracket_match:
-                        pregap_min = int(bracket_match.group(1))
-                        pregap_sec = float(bracket_match.group(2))
-                        pregap_sectors = int((pregap_min * 60 + pregap_sec) * 75)
-                    
-                    track = TrackInfo(
-                        number=track_num,
-                        start_sector=0,
-                        length_sectors=sectors,
-                        pregap_sectors=pregap_sectors,
-                        track_type='audio'
-                    )
-                    tracks.append(track)
-        
-        # Calculate start sectors
-        current_sector = 0
-        for track in tracks:
-            track.start_sector = current_sector
-            current_sector += track.length_sectors
-        
-        return tracks
-
-    def _parse_cd_paranoia_output(self, output: str) -> Dict[str, Any]:
-        """Parse cd-paranoia -Q output based on actual cd-paranoia format"""
-        tracks = []
-        lines = output.strip().split('\n')
-        
-        total_sectors = 0
-        leadout_sector = 0
-        
-        self.logger.info(f"Parsing cd-paranoia output: {len(lines)} lines")
-        
-        # DEBUG: Log the raw cd-paranoia output to see what we're actually parsing
-        self.logger.info("=== RAW CD-PARANOIA OUTPUT FOR DEBUGGING ===")
-        for i, line in enumerate(lines[:25]):  # Show first 25 lines
-            self.logger.info(f"Line {i:2d}: '{line}'")
-        self.logger.info("=== END RAW OUTPUT ===")
-        
-        for line_num, line in enumerate(lines):
-            line = line.strip()
-            self.logger.debug(f"Line {line_num}: '{line}'")
-            
-            # Real cd-paranoia -Q output format:
-            # " 1. 19497 [04:19.72] 0 [00:00.00] OK no 2"
-            # Track number, sectors, [duration], start_sector, [start_time], status, pre, ch
-            
-            # Flexible pattern that matches the essential parts but allows variation
-            track_pattern = r'^\s*(\d{1,2})\.\s+(\d+)\s+\[(\d+):(\d+)\.(\d+)\]\s+(\d+)\s+\[(\d+):(\d+)\.(\d+)\]\s+(\w+)'
-            track_match = re.match(track_pattern, line)
-            
-            # If the main pattern doesn't match, try a simpler fallback pattern
-            if not track_match:
-                # Simpler pattern: " 1. 19497 [04:19.72] ..."
-                simple_pattern = r'^\s*(\d{1,2})\.\s+(\d+)\s+\[(\d+):(\d+)\.(\d+)\]'
-                simple_match = re.match(simple_pattern, line)
-                if simple_match:
-                    self.logger.info(f"Using simple pattern for line: '{line}'")
-                    track_match = simple_match
-            
-            if track_match:
-                try:
-                    track_num = int(track_match.group(1))
-                    sectors = int(track_match.group(2))
-                    minutes = int(track_match.group(3))
-                    seconds = int(track_match.group(4))
-                    frames = int(track_match.group(5))
-                    
-                    # Handle different match group counts
-                    if len(track_match.groups()) >= 10:
-                        # Full pattern match
-                        start_sector = int(track_match.group(6))
-                        status = track_match.group(10)
-                    else:
-                        # Simple pattern match - estimate start sector
-                        start_sector = sum(t['sectors'] for t in tracks)  # Rough estimate
-                        status = 'unknown'
-                    
-                    # Check if we already have this track (avoid duplicates)
-                    existing_track = next((t for t in tracks if t['number'] == track_num), None)
-                    if existing_track:
-                        self.logger.debug(f"Track {track_num} already exists, skipping duplicate")
-                        continue
-                    
-                    # Flexible validation - allow reasonable track numbers and lengths
-                    if track_num <= 0 or track_num > 99:
-                        self.logger.debug(f"Skipping invalid track number: {track_num}")
-                        continue
-                    
-                    # More flexible track length validation (1 second to 90 minutes)
-                    min_sectors = 75      # 1 second minimum
-                    max_sectors = 405000  # 90 minutes maximum
-                    if sectors < min_sectors or sectors > max_sectors:
-                        self.logger.info(f"Skipping track {track_num} with unusual length: {sectors} sectors ({sectors/75:.1f} seconds)")
-                        continue
-                    
-                    # Prefer tracks with "OK" status but don't require it
-                    if status.lower() not in ['ok', 'good', 'pass', 'unknown']:
-                        self.logger.debug(f"Track {track_num} has status '{status}' - accepting anyway")
-                    
-                    # Warn about non-sequential track numbers but accept them
-                    if tracks and track_num > tracks[-1]['number'] + 1:
-                        self.logger.warning(f"Non-sequential track number {track_num} after track {tracks[-1]['number']} - accepting anyway")
-                    
-                    duration = f"{minutes}:{seconds:02d}.{frames:02d}"
-                    
-                    tracks.append({
-                        'number': track_num,
-                        'duration': duration,
-                        'sectors': sectors,
-                        'start_sector': start_sector,
-                        'type': 'audio'
-                    })
-                    total_sectors += sectors
-                    self.logger.info(f"✓ Accepted track {track_num}: {duration} ({sectors} sectors, {sectors/75:.1f}s, start: {start_sector})")
-                    
-                except (ValueError, IndexError) as e:
-                    self.logger.warning(f"Could not parse track from line '{line}': {e}")
-            
-            # Log lines that look like tracks but don't match our pattern
-            elif re.search(r'^\s*\d+\.\s+\d+\s+\[', line):
-                self.logger.warning(f"❌ Track-like line didn't match pattern: '{line}'")
-                    
-            # Look for any total information if present
-            elif 'total' in line.lower() and 'sectors' in line.lower():
-                total_pattern = r'(\d+)\s+sectors'
-                total_match = re.search(total_pattern, line, re.IGNORECASE)
-                if total_match:
-                    leadout_sector = int(total_match.group(1))
-                    self.logger.info(f"✓ Found total: {leadout_sector} sectors")
-        
-        # Sort tracks by track number
-        tracks.sort(key=lambda t: t['number'])
-        
-        # Calculate total sectors if not found
-        if not leadout_sector and tracks:
-            last_track = tracks[-1]
-            leadout_sector = last_track['start_sector'] + last_track['sectors']
-        
-        self.logger.info(f"🎵 Track parsing summary: {len(tracks)} valid audio tracks found")
-        if tracks:
-            self.logger.info(f"   📀 Track range: {tracks[0]['number']} to {tracks[-1]['number']}")
-            total_duration = sum(t['sectors'] for t in tracks) / 75 / 60  # minutes
-            self.logger.info(f"   ⏱️  Total duration: {total_duration:.1f} minutes")
-        
-        if not tracks:
-            self.logger.error("❌ No tracks found in cd-paranoia output")
-            # Log the raw output for debugging
-            self.logger.error("Raw output was:")
-            for i, line in enumerate(lines[:20]):  # First 20 lines for more context
-                self.logger.error(f"  {i}: '{line}'")
-            return {
-                'tracks': [],
-                'total_sectors': 0,
-                'leadout_sector': 0,
-                'first_track': 1,
-                'last_track': 0
-            }
-        
-        result = {
-            'tracks': tracks,
-            'total_sectors': leadout_sector if leadout_sector > 0 else total_sectors,
-            'leadout_sector': leadout_sector if leadout_sector > 0 else total_sectors,
-            'first_track': tracks[0]['number'],
-            'last_track': tracks[-1]['number']
-        }
-        
-        self.logger.info(f"=== PARSE RESULT ===")
-        self.logger.info(f"Result keys: {list(result.keys())}")
-        self.logger.info(f"Tracks count: {len(result['tracks'])}")
-        self.logger.info(f"Total sectors: {result['total_sectors']}")
-        self.logger.info(f"Track range: {result['first_track']}-{result['last_track']}")
-        for track in result['tracks']:
-            self.logger.info(f"  Track {track['number']}: {track['sectors']} sectors")
-        self.logger.info(f"=== END PARSE RESULT ===")
-        
-        return result
-    
-    def _parse_cdrdao_output(self, output: str) -> Optional[Dict[str, Any]]:
-        """Parse cdrdao disk-info output"""
-        # Implementation for cdrdao parsing
-        return None
-    
-    def _parse_discid_output(self, output: str) -> Optional[Dict[str, Any]]:
-        """Parse cd-discid output"""
-        # Implementation for cd-discid parsing
-        return None
     
     def _create_basic_tracks(self, basic_toc: Dict[str, Any]) -> List[TrackInfo]:
         """Create basic track info from parsed TOC data"""
