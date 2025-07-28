@@ -172,5 +172,5 @@ if __name__ == "__main__":
     
     print("\n💡 Recommendation:")
     print("   For now, treat AccurateRip 'not found' as acceptable (current fix)")
-    print("   Focus on ensuring quality rips with cdparanoia burst + paranoia fallback")
+    print("   Focus on ensuring quality rips with cd-paranoia burst + paranoia fallback")
     print("   AccurateRip is a nice-to-have verification, not essential")

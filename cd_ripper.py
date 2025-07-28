@@ -334,485 +334,122 @@ class CDRipper:
         """Rip in burst mode (fast) with immediate per-track encoding"""
         device = self.config['cd_drive']['device']
         tracks = disc_info.tracks
-        last_track_failed = False
-        
+
         try:
             for i, track in enumerate(tracks, 1):
                 self.current_track = i
-                # Progress: 50% for ripping, 50% for encoding per track
                 base_progress = int((i - 1) / len(tracks) * 100)
 
-                # Get track title for logging
+                track_file = output_dir / f"{i:02d}.wav"
 
-                # Robustly get track title, fallback if missing, and log if metadata is missing
-                fallback_title = f'Track {i:02d}'
-                track_meta = None
-                track_title = None
-                if metadata and metadata.get('tracks') and i <= len(metadata['tracks']):
-                    track_meta = metadata['tracks'][i-1]
-                    if not track_meta:
-                        self.logger.warning(f"No metadata for track {i}, using fallback title '{fallback_title}'")
-                        track_title = fallback_title
-                    else:
-                        title = track_meta.get('title')
-                        if not title or not str(title).strip():
-                            self.logger.warning(f"Missing or empty title for track {i}, using fallback title '{fallback_title}'")
-                            track_title = fallback_title
-                        else:
-                            track_title = str(title)
-                else:
-                    self.logger.warning(f"No metadata entry for track {i}, using fallback title '{fallback_title}'")
-                    track_title = fallback_title
-
-                sanitized_title = self._sanitize_filename(track_title)
-                track_file = output_dir / f"{i:02d} - {sanitized_title}.wav"
-
-                self.logger.info(f"Track {i} output WAV filename: {track_file}")
-
-                # Enhanced ripping with gap handling
-                cmd = [
+                # Use cd-paranoia in burst mode
+                track_cmd = [
                     'cd-paranoia',
                     '-d', device,
-                    '-Z',  # Disable all paranoia checks for speed (burst mode)
                     '-z',  # Never ask, never tell
+                    f'{i}',
+                    str(track_file)
                 ]
-                # Add offset to cmd if needed (before positional args)
-                if self.config['cd_drive']['offset'] != 0:
-                    cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                # Standard track ripping
-                track_cmd = cmd + [f'{i}', str(track_file)]
-                # Apply last track specific settings
+
+                # Special handling for last track
                 if i == len(tracks):
-                    last_track_retries = self.config['last_track'].get('retries', 1)
-                    last_track_paranoia = self.config['last_track'].get('paranoia', 'minimal')
-                    leadout_detection = self.config['last_track'].get('leadout_detection', False)
-                    force_overread = self.config['last_track'].get('force_overread', True)
-                    # Check drive capability for overread
-                    enable_overread = force_overread and drive_supports_overread(device)
-                    # For last track, rebuild command with special handling
-                    track_cmd = [
-                        'cd-paranoia',
-                    ]
-                    if enable_overread:
-                        track_cmd.append('--force-overread')
-                        self.logger.info(f"Drive supports overread: enabling --force-overread for last track.")
-                    else:
-                        self.logger.info(f"Drive does not support overread: NOT enabling --force-overread for last track.")
-                    track_cmd += [
-                        '-d', device,
-                        '-z',  # Never ask, never tell
-                        '-Y',  # Most lenient, bypass lead-out verification
-                    ]
-                    if self.config['cd_drive']['offset'] != 0:
-                        track_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                    # Apply last track paranoia settings
-                    if last_track_paranoia == 'minimal':
-                        pass  # Already using -Y above
-                    else:
-                        track_cmd[-1] = '-Z'  # Replace -Y with -Z for standard burst mode
-                    # Add track and output
-                    track_cmd.extend([f'{i}', str(track_file)])
-                    # Extra validation: ensure output filename is not empty
-                    if not str(track_file):
-                        self.logger.error(f"BUG: Last track output filename is empty! Track {i}, track_file={track_file}")
-                        raise RuntimeError(f"BUG: Last track output filename is empty! Track {i}, track_file={track_file}")
-                    if not track_cmd[-1] or track_cmd[-1].strip() == '':
-                        self.logger.error(f"BUG: Last track cd-paranoia command missing output filename! Command: {' '.join(track_cmd)}")
-                        raise RuntimeError(f"BUG: Last track cd-paranoia command missing output filename! Command: {' '.join(track_cmd)}")
-                    # Then add retry setting (must come after track specification)
-                    if last_track_retries > 0:
-                        track_cmd.extend(['-n', str(last_track_retries)])
-                    self.logger.info(f"Last track special command: {' '.join(track_cmd)}")
-                # Handle pre-gaps and HTOA
-                if track.has_htoa and i == 1:
-                    # Rip HTOA if present
-                    htoa_file = output_dir / "00.wav"
-                    htoa_cmd = cmd.copy()
-                    htoa_cmd += [f'-{track.htoa_length//75}', str(htoa_file)]
-                    self.logger.info(f"Ripping HTOA ({track.htoa_length/75:.2f} seconds)")
-                    subprocess.run(htoa_cmd, capture_output=True, text=True, timeout=600)
-                # Debug: Log the exact command being executed
+                    track_cmd.append('--force-overread')
+                    self.logger.info(f"Using force-overread for last track {i} in burst mode")
+
                 self.logger.info(f"Executing cd-paranoia command: {' '.join(track_cmd)}")
 
-                # Check for cancellation before ripping
-                if self._check_cancelled():
-                    return False
-
-                self.logger.info(f"Ripping track {i}...")
-                self.progress = base_progress
                 result = self._run_cancellable_subprocess(track_cmd, timeout=600)
-                
-                # Check for cancellation after ripping
-                if self._check_cancelled():
-                    return False
-                
+
                 if result.returncode != 0:
-                    # Special handling for last track errors - cd-paranoia often has issues with lead-out detection
                     if i == len(tracks):
-                        error_msg = result.stderr.lower()
-                        self.logger.error(f"Last track ({i}) burst rip failed. Command: {' '.join(track_cmd)}")
-                        self.logger.error(f"Last track ({i}) error output: {result.stderr}")
-                        if any(term in error_msg for term in ['last_track', 'lead-out', 'leadout', 'end of disc', 'overread']):
-                            self.logger.warning(f"Last track rip failed with lead-out/overread/leadout detection issue.")
-                            self.logger.info("Attempting last track recovery with alternative settings...")
-                            # Try alternative command for problematic last tracks
-                            recovery_cmd = [
-                                'cd-paranoia',
-                                '-d', device,
-                                '-z',  # Never ask, never tell
-                                '-Y',  # Most lenient paranoia mode
-                                '--force-overread',  # Force reading into lead-out
-                            ]
-                            if self.config['cd_drive']['offset'] != 0:
-                                recovery_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                            recovery_cmd += ['-n', '1', f'{i}', str(track_file)]
-                            self.logger.info(f"Last track recovery command: {' '.join(recovery_cmd)}")
-                            recovery_result = self._run_cancellable_subprocess(recovery_cmd, timeout=900)
-                            if recovery_result.returncode == 0:
-                                self.logger.info("Last track recovery successful!")
-                                result = recovery_result  # Use the successful result
-                            else:
-                                self.logger.error(f"Last track recovery failed. Command: {' '.join(recovery_cmd)}")
-                                self.logger.error(f"Last track recovery error output: {recovery_result.stderr}")
-                                self.logger.warning("Last track recovery failed, will rely on paranoia mode fallback")
-                                last_track_failed = True
-                                break
+                        self.logger.warning(f"Last track failed in burst mode: {result.stderr}")
+                        recovery_cmd = [
+                            'cd-paranoia',
+                            '-d', device,
+                            '-z',
+                            '--force-overread',
+                            '-Y',
+                            f'{i}',
+                            str(track_file)
+                        ]
+                        self.logger.info(f"Attempting recovery for last track with command: {' '.join(recovery_cmd)}")
+                        recovery_result = self._run_cancellable_subprocess(recovery_cmd, timeout=900)
+
+                        if recovery_result.returncode == 0:
+                            self.logger.info("Last track recovery successful!")
+                            result = recovery_result
                         else:
-                            self.logger.error(f"Failed to rip last track {i} (not a lead-out/overread error): {result.stderr}")
+                            self.logger.error(f"Last track recovery failed: {recovery_result.stderr}")
                             return False
                     else:
                         self.logger.error(f"Failed to rip track {i}: {result.stderr}")
                         return False
-                
-                self.logger.info(f"Ripped track {i}, now encoding to FLAC...")
-                
-                # Immediately encode this track to FLAC
-                self.progress = base_progress + int(25 / len(tracks))  # 25% for encoding
-                if not self._encode_single_track(i, track, track_file, output_dir, metadata):
-                    return False
-                
-                # Check for cancellation after encoding
-                if self._check_cancelled():
-                    return False
-                
-                # Immediately verify with AccurateRip if enabled
-                track_verified = True
-                if self.config['ripping']['use_accuraterip']:
-                    self.logger.info(f"Verifying track {i} with AccurateRip...")
-                    self.progress = base_progress + int(40 / len(tracks))  # +15% for verification
-                    track_verified = self._verify_single_track_accuraterip(i, track_file, disc_info)
-                    
-                    if not track_verified:
-                        self.logger.warning(f"Track {i} failed AccurateRip verification")
-                        # Mark for re-ripping later, but continue with other tracks
-                        # We'll handle failed tracks after all tracks are processed
-                
-                # Delete WAV file immediately after verification
-                if track_file.exists():
-                    track_file.unlink()
-                    self.logger.debug(f"Deleted WAV file for track {i}")
-                
-                # Check for cancellation after verification
-                if self._check_cancelled():
-                    return False
-                
-                self.logger.info(f"Completed track {i} (ripped, encoded, {'AccurateRip verified' if track_verified else 'AccurateRip: no database entry'})")
-                self.progress = int(i / len(tracks) * 100)
-            
-            # If only the last track failed, we have a partial success
-            if last_track_failed:
-                self.logger.info("Burst mode partially succeeded - some tracks failed, will need paranoia mode fallback")
-                return False  # Signal that we need paranoia mode, but don't log it as a complete failure
-            
+
+                self.logger.info(f"Ripped track {i} in burst mode")
+
             return True
-            
+
         except subprocess.TimeoutExpired:
             self.logger.error("Burst mode ripping timed out")
             return False
         except Exception as e:
             self.logger.error(f"Burst mode ripping failed: {e}")
             return False
-    
-    def _encode_single_track(self, track_num: int, track_info: Any, wav_file: Path, output_dir: Path, metadata: Dict[str, Any] = None) -> bool:
-        """Encode a single track to FLAC and delete the WAV file"""
-        if not wav_file.exists():
-            self.logger.error(f"WAV file not found: {wav_file}")
-            return False
-        
-        # Check for cancellation before encoding
-        if self._check_cancelled():
-            self.logger.info("Track encoding cancelled by user")
-            return False
-        
-        # Get track metadata
-        track_meta = {}
-        if metadata and metadata.get('tracks') and track_num <= len(metadata['tracks']):
-            track_meta = metadata['tracks'][track_num-1]
-        
-        flac_file = output_dir / f"{track_num:02d} - {self._sanitize_filename(track_meta.get('title', f'Track {track_num:02d}'))}.flac"
-        
-        # Build FLAC encoding command
-        cmd = [
-            'flac',
-            '-f',  # Force overwrite existing files
-            f'--compression-level-{self.config["output"]["compression_level"]}',
-            # Note: NOT using --delete-input-file to keep WAV for AccurateRip verification
-            f'--output-name={flac_file}',
-        ]
-        
-        # Add metadata tags
-        if metadata:
-            if metadata.get('artist'):
-                cmd.extend(['--tag', f'ARTIST={metadata["artist"]}'])
-            if metadata.get('album'):
-                cmd.extend(['--tag', f'ALBUM={metadata["album"]}'])
-            if metadata.get('date'):
-                cmd.extend(['--tag', f'DATE={metadata["date"]}'])
-        
-        if track_meta.get('title'):
-            cmd.extend(['--tag', f'TITLE={track_meta["title"]}'])
-        if track_meta.get('artist'):
-            cmd.extend(['--tag', f'ARTIST={track_meta["artist"]}'])
-        
-        # Calculate dynamic timeout based on track duration
-        try:
-            # TrackInfo has length_seconds property
-            if hasattr(track_info, 'length_seconds'):
-                track_minutes = track_info.length_seconds / 60.0
-            else:
-                track_minutes = 4.0  # Fallback
-            encoding_timeout = max(120, int(track_minutes * 3 + 60))  # Min 2 minutes, scale with length
-        except (AttributeError, TypeError):
-            encoding_timeout = 300  # Fallback for any errors
-        
-        # Add track number tags
-        total_tracks = len(metadata.get('tracks', [])) if metadata else 1
-        cmd.extend(['--tag', f'TRACKNUMBER={track_num}'])
-        cmd.extend(['--tag', f'TOTALTRACKS={total_tracks}'])
-        cmd.append(str(wav_file))
-        
-        # Validate WAV file before encoding
-        if not wav_file.exists():
-            self.logger.error(f"WAV file not found for track {track_num}: {wav_file}")
-            return False
-            
-        # Check if file looks like a valid WAV file
-        try:
-            with open(wav_file, 'rb') as f:
-                header = f.read(12)
-                if len(header) < 12 or not header.startswith(b'RIFF') or header[8:12] != b'WAVE':
-                    self.logger.error(f"Track {track_num} WAV file appears corrupted: {wav_file}")
-                    self.logger.error(f"Header: {header.hex() if header else 'empty'}")
-                    return False
-        except Exception as e:
-            self.logger.error(f"Cannot read WAV file for track {track_num}: {e}")
-            return False
-        
-        self.logger.debug(f"Using {encoding_timeout}s timeout for track {track_num} ({track_minutes:.1f} minutes)")
-        
-        # Use cancellable subprocess for FLAC encoding
-        result = self._run_cancellable_subprocess(cmd, timeout=encoding_timeout)
-        
-        # Check for cancellation after encoding
-        if self._check_cancelled():
-            self.logger.info("Track encoding cancelled by user")
-            return False
-        
-        if result.returncode != 0:
-            self.logger.error(f"Failed to encode track {track_num} to FLAC: {result.stderr}")
-            # If encoding failed, check if it's due to corrupted WAV
-            if "is not a WAVE file" in result.stderr or "treating as a raw file" in result.stderr:
-                self.logger.error(f"WAV file for track {track_num} appears to be corrupted by cd-paranoia")
-                self.logger.error("This may be caused by lead-out detection issues on the last track")
-            return False
-        
-        self.logger.info(f"Encoded track {track_num} to FLAC")
-        return True
-    
-    def _verify_single_track_accuraterip(self, track_num: int, wav_file: Path, disc_info) -> bool:
-        """Verify a single track against AccurateRip and return True if verified or no data available"""
-        try:
-            if not wav_file.exists():
-                self.logger.error(f"WAV file not found for verification: {wav_file}")
-                return False
-            
-            # Calculate AccurateRip checksums for this track
-            v1, v2 = self.accuraterip_checker.accuraterip_checksum(str(wav_file), track_num, len(disc_info.tracks))
-            
-            if v1 is not None and v2 is not None:
-                self.logger.info(f"Track {track_num}: AccurateRip checksums calculated - v1={v1:08x}, v2={v2:08x}")
-                # Note: Full database verification happens during finalization
-                return True
-            else:
-                self.logger.warning(f"Track {track_num}: Failed to calculate AccurateRip checksums")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"AccurateRip checksum calculation failed for track {track_num}: {e}")
-            return True  # Don't fail the rip for AccurateRip errors
-    
+
     def _rip_paranoia_mode(self, disc_info: DiscInfo, output_dir: Path, metadata: Dict[str, Any] = None) -> bool:
         """Rip in paranoia mode (slow but accurate) with per-track encoding and verification"""
         device = self.config['cd_drive']['device']
         tracks = disc_info.tracks
-        
+
         try:
             for i, track in enumerate(tracks, 1):
                 self.current_track = i
-                # Progress: 50% for ripping, 50% for encoding per track
                 base_progress = int((i - 1) / len(tracks) * 100)
 
-                # Robustly get track title, fallback if missing, and log if metadata is missing
-                fallback_title = f'Track {i:02d}'
-                track_meta = None
-                track_title = None
-                if metadata and metadata.get('tracks') and i <= len(metadata['tracks']):
-                    track_meta = metadata['tracks'][i-1]
-                    if not track_meta:
-                        self.logger.warning(f"No metadata for track {i}, using fallback title '{fallback_title}'")
-                        track_title = fallback_title
-                    else:
-                        title = track_meta.get('title')
-                        if not title or not str(title).strip():
-                            self.logger.warning(f"Missing or empty title for track {i}, using fallback title '{fallback_title}'")
-                            track_title = fallback_title
-                        else:
-                            track_title = str(title)
-                else:
-                    self.logger.warning(f"No metadata entry for track {i}, using fallback title '{fallback_title}'")
-                    track_title = fallback_title
+                track_file = output_dir / f"{i:02d}.wav"
 
-                sanitized_title = self._sanitize_filename(track_title)
-                expected_flac_file = output_dir / f"{i:02d} - {sanitized_title}.flac"
-
-                if expected_flac_file.exists():
-                    self.logger.info(f"Track {i} FLAC already exists from burst mode, skipping paranoia re-rip")
-                    # Update progress as if we processed this track
-                    self.progress = int(i / len(tracks) * 100)
-                    continue
-
-                # Use full metadata-based filename for output WAV, matching burst mode
-                fallback_title = f'Track {i:02d}'
-                track_meta = None
-                track_title = None
-                if metadata and metadata.get('tracks') and i <= len(metadata['tracks']):
-                    track_meta = metadata['tracks'][i-1]
-                    if not track_meta:
-                        self.logger.warning(f"No metadata for track {i}, using fallback title '{fallback_title}'")
-                        track_title = fallback_title
-                    else:
-                        title = track_meta.get('title')
-                        if not title or not str(title).strip():
-                            self.logger.warning(f"Missing or empty title for track {i}, using fallback title '{fallback_title}'")
-                            track_title = fallback_title
-                        else:
-                            track_title = str(title)
-                else:
-                    self.logger.warning(f"No metadata entry for track {i}, using fallback title '{fallback_title}'")
-                    track_title = fallback_title
-
-                sanitized_title = self._sanitize_filename(track_title)
-                track_file = output_dir / f"{i:02d} - {sanitized_title}.wav"
-
-                # Use cd-paranoia in paranoia mode
                 cmd = [
                     'cd-paranoia',
                     '-d', device,
-                    '-z',  # Never ask, never tell
+                    '-z',
+                    f'{i}',
+                    str(track_file)
                 ]
-                # Add offset to cmd if needed (before positional args)
-                if self.config['cd_drive']['offset'] != 0:
-                    cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                # Special handling for last track in paranoia mode
-                if i == len(tracks):
-                    force_overread = self.config.get('last_track', {}).get('force_overread', True)
-                    if force_overread:
-                        cmd.append('--force-overread')
-                        self.logger.info(f"Using force-overread for last track {i} in paranoia mode")
-                    # Use minimal paranoia for last track to avoid lead-out issues
-                    cmd.append('-Y')  # Most lenient paranoia mode
-                    self.logger.info(f"Using minimal paranoia mode for last track {i}")
-                cmd.extend([f'{i}', str(track_file)])
 
-                # Use extended timeout for last track
-                timeout = 1800
                 if i == len(tracks):
-                    timeout = self.config.get('last_track', {}).get('timeout', 900)
-                    self.logger.info(f"Using extended timeout {timeout}s for last track {i}")
+                    cmd.extend(['--force-overread', '-Y'])
+                    self.logger.info(f"Using force-overread and minimal paranoia mode for last track {i}")
 
                 self.logger.info(f"Ripping track {i} in paranoia mode...")
-                self.progress = base_progress
-                result = self._run_cancellable_subprocess(cmd, timeout=timeout)
 
-                # Check for cancellation after ripping each track
-                if self._check_cancelled():
-                    return False
+                result = self._run_cancellable_subprocess(cmd, timeout=1800 if i == len(tracks) else 900)
 
                 if result.returncode != 0:
-                    # Special last track handling in paranoia mode
                     if i == len(tracks):
                         self.logger.warning(f"Last track failed in paranoia mode: {result.stderr}")
-                        # Try one final desperate attempt with absolute minimal settings
-                        if '--force-overread' not in cmd:
-                            self.logger.info("Attempting final recovery with emergency settings...")
-                            emergency_cmd = [
-                                'cd-paranoia',
-                                '-d', device,
-                                '-z',  # Never ask, never tell
-                                '-Y',  # Most lenient
-                                '--force-overread',
-                            ]
-                            if self.config['cd_drive']['offset'] != 0:
-                                emergency_cmd.extend(['-O', str(self.config['cd_drive']['offset'])])
-                            emergency_cmd += ['-n', '1', f'{i}', str(track_file)]
-                            emergency_result = self._run_cancellable_subprocess(emergency_cmd, timeout=1200)
+                        recovery_cmd = [
+                            'cd-paranoia',
+                            '-d', device,
+                            '-z',
+                            '--force-overread',
+                            '-Y',
+                            f'{i}',
+                            str(track_file)
+                        ]
+                        self.logger.info(f"Attempting recovery for last track with command: {' '.join(recovery_cmd)}")
+                        recovery_result = self._run_cancellable_subprocess(recovery_cmd, timeout=1200)
 
-                            if emergency_result.returncode == 0:
-                                self.logger.info("Emergency last track recovery successful!")
-                                result = emergency_result
-                            else:
-                                self.logger.error(f"All last track recovery attempts failed. Track {i} could not be ripped.")
-                                self.logger.error("This may be due to lead-out detection issues or disc damage.")
-                                return False
+                        if recovery_result.returncode == 0:
+                            self.logger.info("Last track recovery successful!")
+                            result = recovery_result
                         else:
-                            self.logger.error(f"Final last track attempt failed: {result.stderr}")
+                            self.logger.error(f"Last track recovery failed: {recovery_result.stderr}")
                             return False
                     else:
                         self.logger.error(f"Failed to rip track {i}: {result.stderr}")
                         return False
 
-                self.logger.info(f"Ripped track {i} in paranoia mode, now encoding to FLAC...")
-
-                # Immediately encode this track to FLAC
-                self.progress = base_progress + int(25 / len(tracks))  # 25% for encoding
-                if not self._encode_single_track(i, track, track_file, output_dir, metadata):
-                    return False
-
-                # Check for cancellation after encoding
-                if self._check_cancelled():
-                    return False
-
-                # Immediately verify with AccurateRip if enabled
-                track_verified = True
-                if self.config['ripping']['use_accuraterip']:
-                    self.logger.info(f"Verifying track {i} with AccurateRip...")
-                    self.progress = base_progress + int(40 / len(tracks))  # +15% for verification
-                    track_verified = self._verify_single_track_accuraterip(i, track_file, disc_info)
-
-                # Check for cancellation after verification
-                if self._check_cancelled():
-                    return False
-
-                # Delete the WAV file to save space (we have the FLAC now)
-                if track_file.exists():
-                    track_file.unlink()
-
-                # Log completion status
-                verification_status = "verified" if track_verified else "verification failed"
-                self.logger.info(f"Completed track {i} (ripped, encoded, {verification_status})")
-
-                # Update progress to completed for this track
-                self.progress = int(i / len(tracks) * 100)
+                self.logger.info(f"Ripped track {i} in paranoia mode")
 
             return True
 

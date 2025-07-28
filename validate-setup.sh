@@ -52,21 +52,21 @@ else
     ((ISSUES++))
 fi
 
-# Check for cdparanoia (optional, for testing)
+# Check for cd-paranoia (optional, for testing)
 echo
 echo "🎵 Checking audio tools..."
-if command -v cdparanoia >/dev/null 2>&1; then
-    echo -e "✅ ${GREEN}cdparanoia found (can test CD access)${NC}"
+if command -v cd-paranoia >/dev/null 2>&1; then
+    echo -e "✅ ${GREEN}cd-paranoia found (can test CD access)${NC}"
     
     # Test CD access if a disc is inserted
-    if cdparanoia -Q 2>/dev/null | grep -q "tracks"; then
+    if cd-paranoia -Q 2>/dev/null | grep -q "tracks"; then
         echo -e "✅ ${GREEN}CD detected and accessible${NC}"
-        cdparanoia -Q 2>/dev/null | head -3
+        cd-paranoia -Q 2>/dev/null | head -3
     else
         echo -e "ℹ️  ${YELLOW}No CD detected (insert a CD to test)${NC}"
     fi
 else
-    echo -e "ℹ️  ${YELLOW}cdparanoia not found (install to test CD access)${NC}"
+    echo -e "ℹ️  ${YELLOW}cd-paranoia not found (install to test CD access)${NC}"
 fi
 
 # Check network connectivity

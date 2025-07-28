@@ -1,12 +1,12 @@
 #!/bin/bash
-# cdparanoia-debug.sh - Debug script to see actual cdparanoia output
+# cd-paranoia-debug.sh - Debug script to see actual cd-paranoia output
 
-echo "🔍 Debugging cdparanoia output format..."
+echo "🔍 Debugging cd-paranoia output format..."
 echo "========================================"
 
-# Check if cdparanoia is available
-if ! command -v cdparanoia &> /dev/null; then
-    echo "❌ cdparanoia not found - this script must run in Docker container"
+# Check if cd-paranoia is available
+if ! command -v cd-paranoia &> /dev/null; then
+    echo "❌ cd-paranoia not found - this script must run in Docker container"
     exit 1
 fi
 
@@ -19,31 +19,31 @@ if [ ! -e "$DEVICE" ]; then
     exit 1
 fi
 
-echo "📀 Testing cdparanoia with device: $DEVICE"
+echo "📀 Testing cd-paranoia with device: $DEVICE"
 echo
 
-# Test cdparanoia -Q command and capture ALL output
-echo "=== CDPARANOIA -Q OUTPUT ==="
-echo "Command: cdparanoia -Q -d $DEVICE"
+# Test cd-paranoia -Q command and capture ALL output
+echo "=== cd-paranoia -Q OUTPUT ==="
+echo "Command: cd-paranoia -Q -d $DEVICE"
 echo
 echo "STDOUT:"
-cdparanoia -Q -d "$DEVICE" 2>cdparanoia_stderr.log || echo "Command failed with exit code $?"
+cd-paranoia -Q -d "$DEVICE" 2>cd-paranoia_stderr.log || echo "Command failed with exit code $?"
 echo
 echo "STDERR:"
-cat cdparanoia_stderr.log
+cat cd-paranoia_stderr.log
 echo
 echo "=== END OUTPUT ==="
 
 # Also test without -d flag
 echo
-echo "=== CDPARANOIA -Q (no device flag) OUTPUT ==="
-echo "Command: cdparanoia -Q"
+echo "=== cd-paranoia -Q (no device flag) OUTPUT ==="
+echo "Command: cd-paranoia -Q"
 echo
 echo "STDOUT:"
-cdparanoia -Q 2>cdparanoia_stderr_nodev.log || echo "Command failed with exit code $?"
+cd-paranoia -Q 2>cd-paranoia_stderr_nodev.log || echo "Command failed with exit code $?"
 echo
 echo "STDERR:"
-cat cdparanoia_stderr_nodev.log
+cat cd-paranoia_stderr_nodev.log
 echo
 echo "=== END OUTPUT ==="
 
@@ -59,6 +59,6 @@ fi
 echo
 
 # Clean up
-rm -f cdparanoia_stderr.log cdparanoia_stderr_nodev.log
+rm -f cd-paranoia_stderr.log cd-paranoia_stderr_nodev.log
 
-echo "✅ Debug complete - check output above for actual cdparanoia format"
+echo "✅ Debug complete - check output above for actual cd-paranoia format"

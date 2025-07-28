@@ -56,7 +56,7 @@ def test_last_track_command_generation():
         # Manually build the command like _rip_burst_mode would
         device = ripper.config['cd_drive']['device']
         cmd = [
-            'cdparanoia',
+            'cd-paranoia',
             '-d', device,
             '-Z',  # Disable all paranoia checks for speed (burst mode)
             '-z',  # Never ask, never tell

@@ -66,18 +66,20 @@ class CDMonitor:
         try:
             # Try to read the CD table of contents
             result = subprocess.run(
-                ['cd-paranoia', '-Q', '-d', device],
+                ['cd-paranoia', '-Q', f'--device={device}'],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
+            
             # If cd-paranoia can read the TOC, a CD is present
             return result.returncode == 0 and 'track' in result.stderr.lower()
+            
         except subprocess.TimeoutExpired:
             self.logger.warning("CD check timed out")
             return False
         except FileNotFoundError:
-            self.logger.error("cdparanoia not found")
+            self.logger.error("cd-paranoia not found")
             return False
         except Exception as e:
             self.logger.error(f"Error checking CD: {e}")
@@ -100,9 +102,9 @@ class CDMonitor:
                 # First part of the output is the disc ID
                 return result.stdout.strip().split()[0]
             
-            # Fallback: use cdparanoia to get track count as a simple ID
+            # Fallback: use cd-paranoia to get track count as a simple ID
             result = subprocess.run(
-                ['cdparanoia', '-Q', '-d', device],
+                ['cd-paranoia', '-Q', f'--device={device}'],
                 capture_output=True,
                 text=True,
                 timeout=10

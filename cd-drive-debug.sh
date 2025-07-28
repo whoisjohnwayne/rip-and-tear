@@ -20,21 +20,21 @@ else
 fi
 echo
 
-echo "3. 🎵 Testing cdparanoia..."
-if command -v cdparanoia >/dev/null 2>&1; then
-    echo "✅ cdparanoia is available"
-    echo "Testing CD detection with cdparanoia..."
+echo "3. 🎵 Testing cd-paranoia..."
+if command -v cd-paranoia >/dev/null 2>&1; then
+    echo "✅ cd-paranoia is available"
+    echo "Testing CD detection with cd-paranoia..."
     
     # Try different device paths
     for device in /dev/cdrom /dev/sr0 /dev/sr1 /dev/dvd; do
         if [ -e "$device" ]; then
             echo "Testing device: $device"
-            timeout 10s cdparanoia -Q -d "$device" 2>&1 | head -10
+            timeout 10s cd-paranoia -Q -d "$device" 2>&1 | head -10
             echo "---"
         fi
     done
 else
-    echo "❌ cdparanoia not found"
+    echo "❌ cd-paranoia not found"
 fi
 echo
 

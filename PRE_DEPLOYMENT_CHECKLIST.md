@@ -20,7 +20,7 @@ Before deploying Rip and Tear in Portainer, please verify these items:
 ls -la /dev/cdrom /dev/sr* /dev/dvd*
 
 # Test with a CD inserted:
-cdparanoia -Q  # Should show disc information
+cd-paranoia -Q  # Should show disc information
 ```
 
 ## 🐳 **Docker Environment**
@@ -132,7 +132,7 @@ docker ps | grep rip-and-tear
 docker logs rip-and-tear
 
 # Test CD drive access inside container
-docker exec rip-and-tear cdparanoia -Q
+docker exec rip-and-tear cd-paranoia -Q
 
 # Check output files
 docker exec rip-and-tear ls -la /output

@@ -75,7 +75,7 @@ Check your CD drive device path on the Docker host:
 ls -la /dev/cdrom /dev/sr* /dev/dvd*
 
 # Test CD drive access
-cdparanoia -Q
+cd-paranoia -Q
 ```
 
 Common device paths:

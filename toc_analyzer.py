@@ -157,7 +157,7 @@ class TOCAnalyzer:
     def _get_basic_toc(self) -> Optional[Dict[str, Any]]:
         """Get basic TOC using cd-paranoia (most reliable method)"""
         try:
-            result = self._get_toc_cdparanoia()
+            result = self._get_toc_cd_paranoia()
             if result:
                 self.logger.info("TOC obtained using cd-paranoia")
                 return result
@@ -168,7 +168,7 @@ class TOCAnalyzer:
             self.logger.error(f"cd-paranoia failed: {e}")
             return None
     
-    def _get_toc_cdparanoia(self) -> Optional[Dict[str, Any]]:
+    def _get_toc_cd_paranoia(self) -> Optional[Dict[str, Any]]:
         """Get TOC using cd-paranoia"""
         try:
             result = subprocess.run(
@@ -193,7 +193,7 @@ class TOCAnalyzer:
             # cd-paranoia outputs to STDERR, not STDOUT
             output_to_parse = result.stderr if result.stderr.strip() else result.stdout
             
-            return self._parse_cdparanoia_output(output_to_parse)
+            return self._parse_cd_paranoia_output(output_to_parse)
         
         except subprocess.TimeoutExpired:
             self.logger.error("cd-paranoia timed out")
@@ -219,7 +219,9 @@ class TOCAnalyzer:
         try:
             result = subprocess.run(
                 ['cd-discid', self.device],
-                capture_output=True, text=True, timeout=30
+                capture_output=True,
+                text=True,
+                timeout=30
             )
             
             if result.returncode == 0:
@@ -247,7 +249,7 @@ class TOCAnalyzer:
             )
             
             if result.returncode == 0:
-                enhanced_tracks = self._parse_cdparanoia_gaps(result.stderr)
+                enhanced_tracks = self._parse_cd_paranoia_gaps(result.stderr)
                 if enhanced_tracks and len(enhanced_tracks) == len(tracks):
                     # Merge gap information into basic tracks
                     for i, enhanced_track in enumerate(enhanced_tracks):
@@ -579,8 +581,8 @@ class TOCAnalyzer:
         
         return None
     
-    def _parse_cdparanoia_gaps(self, output: str) -> List[TrackInfo]:
-        """Parse cdparanoia verbose output for gap information"""
+    def _parse_cd-paranoia_gaps(self, output: str) -> List[TrackInfo]:
+        """Parse cd-paranoia verbose output for gap information"""
         tracks = []
         lines = output.strip().split('\n')
         
@@ -627,18 +629,18 @@ class TOCAnalyzer:
         
         return tracks
 
-    def _parse_cdparanoia_output(self, output: str) -> Dict[str, Any]:
-        """Parse cdparanoia -Q output based on actual cdparanoia format"""
+    def _parse_cd-paranoia_output(self, output: str) -> Dict[str, Any]:
+        """Parse cd-paranoia -Q output based on actual cd-paranoia format"""
         tracks = []
         lines = output.strip().split('\n')
         
         total_sectors = 0
         leadout_sector = 0
         
-        self.logger.info(f"Parsing cdparanoia output: {len(lines)} lines")
+        self.logger.info(f"Parsing cd-paranoia output: {len(lines)} lines")
         
-        # DEBUG: Log the raw cdparanoia output to see what we're actually parsing
-        self.logger.info("=== RAW CDPARANOIA OUTPUT FOR DEBUGGING ===")
+        # DEBUG: Log the raw cd-paranoia output to see what we're actually parsing
+        self.logger.info("=== RAW CD-PARANOIA OUTPUT FOR DEBUGGING ===")
         for i, line in enumerate(lines[:25]):  # Show first 25 lines
             self.logger.info(f"Line {i:2d}: '{line}'")
         self.logger.info("=== END RAW OUTPUT ===")
@@ -647,7 +649,7 @@ class TOCAnalyzer:
             line = line.strip()
             self.logger.debug(f"Line {line_num}: '{line}'")
             
-            # Real cdparanoia -Q output format:
+            # Real cd-paranoia -Q output format:
             # " 1. 19497 [04:19.72] 0 [00:00.00] OK no 2"
             # Track number, sectors, [duration], start_sector, [start_time], status, pre, ch
             
@@ -750,7 +752,7 @@ class TOCAnalyzer:
             self.logger.info(f"   ⏱️  Total duration: {total_duration:.1f} minutes")
         
         if not tracks:
-            self.logger.error("❌ No tracks found in cdparanoia output")
+            self.logger.error("❌ No tracks found in cd-paranoia output")
             # Log the raw output for debugging
             self.logger.error("Raw output was:")
             for i, line in enumerate(lines[:20]):  # First 20 lines for more context
