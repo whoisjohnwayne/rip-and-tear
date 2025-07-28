@@ -164,7 +164,7 @@ class TOCAnalyzer:
 
             create_toc.wait()
 
-            with open('toc.toc', r) as fh:
+            with open('toc.toc', 'r') as fh:
                 toc_data = fh.read()
 
             if create_toc.returncode != 0:
