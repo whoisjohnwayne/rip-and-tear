@@ -420,7 +420,6 @@ The application is modular with separate components for:
 ### System Tools
 - `cd-paranoia`: CD ripping
 - `flac`: FLAC encoding
-- `cdrdao`: CUE sheet support
 
 ### Python Libraries
 - `flask`: Web interface

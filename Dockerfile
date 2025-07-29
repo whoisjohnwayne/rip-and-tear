@@ -20,7 +20,6 @@ RUN apk update && \
         libcdio-dev \
         libdiscid \
         libdiscid-dev \
-        cdrdao \
         cd-discid \
         # Build dependencies (permanent for Python packages that need compilation)
         gcc \
