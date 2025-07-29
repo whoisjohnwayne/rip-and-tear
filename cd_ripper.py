@@ -525,14 +525,13 @@ class CDRipper:
         
         # Calculate dynamic timeout based on track duration
         try:
-            # Convert duration from 'MM:SS' format to seconds
-            if 'duration' in track_info:
-                minutes, seconds = map(int, track_info['duration'].split(':'))
-                track_minutes = minutes + seconds / 60.0
+            # TrackInfo has length_seconds property
+            if hasattr(track_info, 'length_seconds'):
+                track_minutes = track_info.length_seconds / 60.0
             else:
                 track_minutes = 4.0  # Fallback
             encoding_timeout = max(120, int(track_minutes * 3 + 60))  # Min 2 minutes, scale with length
-        except (ValueError, KeyError):
+        except (AttributeError, TypeError):
             encoding_timeout = 300  # Fallback for any errors
         
         # Add track number tags
@@ -683,14 +682,9 @@ class CDRipper:
                     self.logger.info(f"Using minimal paranoia mode for last track {i}")
                 cmd.extend([f'{i}', str(track_file)])
 
-                # Use extended timeout for last track
-                if i == len(tracks):
-                    timeout = self.config.get('timeout', 900)
-                    self.logger.info(f"Using extended timeout {timeout}s for last track {i}")
-
                 self.logger.info(f"Ripping track {i} in paranoia mode...")
                 self.progress = base_progress
-                result = self._run_cancellable_subprocess(cmd, timeout=timeout)
+                result = self._run_cancellable_subprocess(cmd, timeout=1800)
 
                 # Check for cancellation after ripping each track
                 if self._check_cancelled():
@@ -1092,15 +1086,14 @@ class CDRipper:
             # Rule: 3 seconds per minute of audio + 60 second base (very conservative)
             track_duration_str = track.get('duration', '4:00')  # Default to 4 minutes if unknown
             try:
-                # Convert duration from 'MM:SS' format to seconds
-                if 'duration' in track:
-                    minutes, seconds = map(int, track_duration_str.split(':'))
-                    track_minutes = minutes + seconds / 60.0
+                if ':' in track_duration_str:
+                    parts = track_duration_str.split(':')
+                    track_minutes = int(parts[0]) + float(parts[1]) / 60
                 else:
                     track_minutes = 4.0  # Fallback
                 encoding_timeout = max(120, int(track_minutes * 3 + 60))  # Min 2 minutes, scale with length
-            except (ValueError, KeyError):
-                encoding_timeout = 300  # Fallback for any errors
+            except (ValueError, IndexError):
+                encoding_timeout = 300  # Fallback for parsing errors
             
             self.logger.debug(f"Using {encoding_timeout}s timeout for {track_duration_str} track")
             
