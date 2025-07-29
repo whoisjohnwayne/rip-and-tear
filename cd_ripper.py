@@ -525,13 +525,14 @@ class CDRipper:
         
         # Calculate dynamic timeout based on track duration
         try:
-            # TrackInfo has length_seconds property
-            if hasattr(track_info, 'length_seconds'):
-                track_minutes = track_info.length_seconds / 60.0
+            # Convert duration from 'MM:SS' format to seconds
+            if 'duration' in track_info:
+                minutes, seconds = map(int, track_info['duration'].split(':'))
+                track_minutes = minutes + seconds / 60.0
             else:
                 track_minutes = 4.0  # Fallback
             encoding_timeout = max(120, int(track_minutes * 3 + 60))  # Min 2 minutes, scale with length
-        except (AttributeError, TypeError):
+        except (ValueError, KeyError):
             encoding_timeout = 300  # Fallback for any errors
         
         # Add track number tags
@@ -1091,14 +1092,15 @@ class CDRipper:
             # Rule: 3 seconds per minute of audio + 60 second base (very conservative)
             track_duration_str = track.get('duration', '4:00')  # Default to 4 minutes if unknown
             try:
-                if ':' in track_duration_str:
-                    parts = track_duration_str.split(':')
-                    track_minutes = int(parts[0]) + float(parts[1]) / 60
+                # Convert duration from 'MM:SS' format to seconds
+                if 'duration' in track:
+                    minutes, seconds = map(int, track_duration_str.split(':'))
+                    track_minutes = minutes + seconds / 60.0
                 else:
                     track_minutes = 4.0  # Fallback
                 encoding_timeout = max(120, int(track_minutes * 3 + 60))  # Min 2 minutes, scale with length
-            except (ValueError, IndexError):
-                encoding_timeout = 300  # Fallback for parsing errors
+            except (ValueError, KeyError):
+                encoding_timeout = 300  # Fallback for any errors
             
             self.logger.debug(f"Using {encoding_timeout}s timeout for {track_duration_str} track")
             
@@ -1143,11 +1145,12 @@ class CDRipper:
             if i <= len(track_meta):
                 title = track_meta[i-1].get('title', 'Unknown')
             
-            log_content.append(f"  {i:02d}. {title} ({track['duration']})")
+            log_content.append(f"  {i:02d}. {title} ({track.length_seconds:.2f} seconds)")
         
+        total_time = sum(track.length_seconds for track in toc_info.tracks)
         log_content.extend([
             "",
-            f"Total Time: {toc_info.total_time}",
+            f"Total Time: {total_time:.2f} seconds",
             f"Rip Mode: {'Burst + AccurateRip' if self.config['ripping']['try_burst_first'] else 'Paranoia'}",
             f"Encoding: FLAC Level {self.config['output']['compression_level']}",
         ])
@@ -1195,8 +1198,7 @@ class CDRipper:
             RipStatus.VERIFYING_ACCURATERIP,
             RipStatus.RERIPPING_FAILED_TRACKS,
             RipStatus.RIPPING_PARANOIA,
-            RipStatus.ENCODING,
-            RipStatus.CREATING_CUE
+            RipStatus.ENCODING
         ]
         
         if self.status in active_states:
